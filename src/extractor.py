@@ -1,0 +1,349 @@
+"""
+Structured field extractor for Korean securities PDF reports.
+Replace `extract_report_data` with an LLM-backed version to upgrade accuracy.
+
+Actual PDF formats observed (2026-04):
+  Company   : "iM금융 (139130)"  /  "(009830)\n한화솔루션"  /  "삼성SDI 006400"
+              "삼성SDI (006400/KS)"  /  word-wrapped "HD현대일렉트\n릭\n(267260)"
+  Rating    : "BUY (유지)"  /  "매수 (유지)"  /  "투자의견\nBUY(유지)"
+  TP        : "목표주가(12M)\n24,500원(상향)"  /  "TP 880,000 원"
+              "6개월 목표주가\n1,500,000\n상향"  (no 원, three lines)
+  CurPrice  : "현재주가(4.28)\n19,280원"  /  "현재가 (4/28)\n680,000원"
+              "현재주가\n(26.04.28)\n1,238,000"  (three lines, no 원)
+              "주가(4/28): 76,500원"  /  "종가(2026.04.28)\n167,100원"
+"""
+import re
+from typing import Optional, List
+
+# ---------------------------------------------------------------------------
+# Rating patterns
+# ---------------------------------------------------------------------------
+
+_RATING_PATTERNS: List[str] = [
+    # 투자의견 label followed by newline then rating
+    r"투자의견\s*[\n:]\s*(강력매수|적극매수|매수|보유|중립|매도|BUY|Buy|HOLD|Hold|SELL|Sell|Outperform|Underperform|Overweight|Underweight)",
+    # 투자의견 label inline
+    r"투자의견[:\s]+(강력매수|적극매수|매수|보유|중립|매도|BUY|Buy|HOLD|Hold|SELL|Sell|Outperform|Underperform|Overweight|Underweight)",
+    # "BUY (유지)" / "매수 (유지)" — rating as first token before parens
+    r"^[ \t]*(강력매수|적극매수|매수|보유|중립|매도|BUY|HOLD|SELL|Buy|Hold|Sell)\s*[\(\（]",
+    # plain keyword
+    r"\b(강력매수|적극매수|매수|보유|중립|매도)\b",
+    r"\b(BUY|HOLD|SELL)\b",
+]
+
+# ---------------------------------------------------------------------------
+# Securities firm patterns  (Korean name preferred, email-domain fallback)
+# ---------------------------------------------------------------------------
+
+_FIRM_PATTERNS: List[str] = [
+    r"([가-힣]{2,8}(?:증권|투자증권|금융투자|자산운용))",
+]
+
+# email domain → Korean firm name
+_DOMAIN_FIRM_MAP = {
+    "hana": "하나증권",
+    "hanafn": "하나증권",
+    "ibks": "IBK투자증권",
+    "eugene": "유진투자증권",
+    "eugenefn": "유진투자증권",
+    "kyobo": "교보증권",
+    "kiwoom": "키움증권",
+    "shinhan": "신한투자증권",
+    "kb": "KB증권",
+    "mirae": "미래에셋증권",
+    "samsung": "삼성증권",
+    "nh": "NH투자증권",
+    "sk": "SK증권",
+    "daishin": "대신증권",
+    "hi": "하이투자증권",
+    "imeritz": "이베스트투자증권",
+    "iprovest": "이베스트투자증권",
+    "meritz": "메리츠증권",
+    "hanwha": "한화투자증권",
+    "hyundai": "현대차증권",
+    "lotte": "롯데증권",
+}
+
+# ---------------------------------------------------------------------------
+# Analyst patterns
+# ---------------------------------------------------------------------------
+
+_ANALYST_PATTERNS: List[str] = [
+    r"Analyst\s+([가-힣]{2,4})",
+    r"애널리스트[:\s]*([가-힣]{2,4})",
+    r"분석가[:\s]*([가-힣]{2,4})",
+    r"작성자[:\s]*([가-힣]{2,4})",
+    r"([가-힣]{2,4})\s*(?:애널리스트|연구원|선임|수석|CFA)",
+]
+
+# ---------------------------------------------------------------------------
+# Date patterns
+# ---------------------------------------------------------------------------
+
+_DATE_PATTERNS: List[str] = [
+    r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})",
+    r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일",
+]
+
+# ---------------------------------------------------------------------------
+# Investment thesis section headers
+# ---------------------------------------------------------------------------
+
+_THESIS_HEADERS: List[str] = [
+    r"투자\s*포인트[:\s\n]+([\s\S]{30,600}?)(?=\n\n|\Z)",
+    r"투자\s*근거[:\s\n]+([\s\S]{30,600}?)(?=\n\n|\Z)",
+    r"핵심\s*요약[:\s\n]+([\s\S]{30,600}?)(?=\n\n|\Z)",
+    r"요\s*약[:\s\n]+([\s\S]{30,600}?)(?=\n\n|\Z)",
+    r"Summary[:\s\n]+([\s\S]{30,600}?)(?=\n\n|\Z)",
+]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_number(text: str) -> Optional[int]:
+    cleaned = re.sub(r"[,\s원]", "", text)
+    try:
+        return int(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def _first_match(text: str, patterns: List[str], group: int = 1,
+                 flags: int = re.IGNORECASE | re.MULTILINE) -> Optional[str]:
+    for pattern in patterns:
+        m = re.search(pattern, text, flags)
+        if m:
+            try:
+                val = m.group(group)
+                if val:
+                    return val.strip()
+            except IndexError:
+                pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Dedicated extractors for fields that need multi-line or special logic
+# ---------------------------------------------------------------------------
+
+def _extract_company(text: str) -> Optional[str]:
+    """
+    Handles four real-world layouts (line-by-line to prevent cross-line noise):
+      1. "iM금융 (139130)"           name + code in parens on same line
+      2. "삼성SDI (006400/KS)"       same, with exchange suffix in parens
+      3. "삼성SDI 006400"            name + bare code, no parens
+      4. "HD현대일렉트\\n릭\\n(267260)"  name word-wrapped across lines before code-only line
+      5. "(009830)\\n한화솔루션"      code-only line, name on next line
+    """
+    # _CODE_RE matches a 6-digit code with optional exchange suffix e.g. /KS /KQ
+    _CODE_IN_PARENS = r"\(\s*\d{6}(?:[/\-][A-Z]{1,3})?\s*\)"
+
+    lines = text.split("\n")
+
+    for i, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        # Layouts 1 & 2: name immediately before "(NNNNNN)" or "(NNNNNN/KS)"
+        m = re.search(
+            r"([가-힣A-Za-z0-9][가-힣A-Za-z0-9 \t·&]{0,18}?)\s*" + _CODE_IN_PARENS,
+            line,
+        )
+        if m:
+            candidate = m.group(1).strip()
+            if re.search(r"[가-힣]", candidate) or re.search(r"[A-Za-z]{2,}", candidate):
+                return candidate
+
+        # Layout 3: bare code at end of line, name before it (no parens)
+        m = re.match(
+            r"([가-힣A-Za-z][가-힣A-Za-z0-9 \t·]{0,18}?)\s+(\d{6})\s*$",
+            line,
+        )
+        if m:
+            candidate = m.group(1).strip()
+            if re.search(r"[가-힣]", candidate) or re.search(r"[A-Za-z]{2,}", candidate):
+                return candidate
+
+        # Layout 4: this line is ONLY "(NNNNNN)" or "(NNNNNN/KS)" → name is on preceding lines
+        if re.fullmatch(r"\(\s*\d{6}(?:[/\-][A-Z]{1,3})?\s*\)", line):
+            # Collect up to 2 non-empty preceding lines and join (handles word-wrap)
+            prev = [lines[j].strip() for j in range(max(0, i - 2), i) if lines[j].strip()]
+            candidate = "".join(prev)
+            if (
+                candidate
+                and len(candidate) <= 25
+                and (re.search(r"[가-힣]", candidate) or re.search(r"[A-Za-z]{2,}", candidate))
+                and not re.search(r"\d{4,}", candidate)  # reject if mostly numbers
+            ):
+                return candidate
+
+    # Layout 5: "(009830)\nname" — code on one line, name on the next line
+    m = re.search(r"\(\s*\d{6}\s*\)\s*\n\s*([가-힣A-Za-z0-9·& ]{2,25})", text)
+    if m:
+        return m.group(1).strip().split("\n")[0].strip()
+
+    return None
+
+
+def _extract_price_after_label(text: str, label_pattern: str) -> Optional[int]:
+    """
+    Tries four layouts in order:
+
+    Two-line with 원:   label[anything]\nprice원
+    Same-line with 원:  label[gap]price원
+    Three-line, 원?:   label[anything]\n[intermediate line]\nprice원?
+                        e.g. "현재주가\n(26.04.28)\n1,238,000"
+    Two-line, 원?:      label[anything]\nprice  (no 원, sidebar boxes)
+                        e.g. "6개월 목표주가\n1,500,000\n상향"
+
+    [^\n]{0,30}: allows date digits like (4.28) or (12M) on the label line.
+    """
+    # 1. Two-line with 원
+    m = re.search(
+        label_pattern + r"[^\n]{0,30}\n\s*([0-9,]{4,})\s*원",
+        text, re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        return _parse_number(m.group(1))
+
+    # 2. Same-line with 원
+    m = re.search(
+        label_pattern + r"[^\n\d]{0,10}([0-9,]{4,})\s*원",
+        text, re.IGNORECASE,
+    )
+    if m:
+        return _parse_number(m.group(1))
+
+    # 3. Three-line (intermediate line between label and price, 원 optional)
+    #    e.g. "현재주가\n(26.04.28)\n1,238,000"
+    m = re.search(
+        label_pattern + r"[^\n]{0,30}\n[^\n]{1,60}\n\s*([0-9,]{4,})\s*원?",
+        text, re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        val = _parse_number(m.group(1))
+        if val and val >= 1000:  # guard against false positives
+            return val
+
+    # 4. Two-line without 원 (sidebar-box format)
+    #    e.g. "6개월 목표주가\n1,500,000\n상향"
+    m = re.search(
+        label_pattern + r"[^\n]{0,30}\n\s*([0-9,]{5,})\s*\n",
+        text, re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        val = _parse_number(m.group(1))
+        if val and val >= 1000:
+            return val
+
+    return None
+
+
+def _extract_target_price(text: str) -> Optional[int]:
+    # "목표주가" and "6개월 목표주가" labels
+    for label in (r"6개월\s*목표주가", r"목표\s*주가"):
+        tp = _extract_price_after_label(text, label)
+        if tp:
+            return tp
+    # "TP 880,000 원" same-line variant
+    m = re.search(r"\bTP\s+([0-9,]{4,})\s*원?", text, re.IGNORECASE)
+    if m:
+        return _parse_number(m.group(1))
+    return None
+
+
+def _extract_current_price(text: str) -> Optional[int]:
+    # "현재가" must NOT be followed by a Korean character, so that "현재가치"
+    # (present value, a finance term) is excluded from matching.
+    for label in (r"현재\s*(?:주가|가(?![가-힣]))", r"종가"):
+        cp = _extract_price_after_label(text, label)
+        if cp:
+            return cp
+
+    # "주가(4/28): 76,500원" — compact inline format used by some brokers
+    m = re.search(r"주가\s*\([0-9/]+\)\s*:\s*([0-9,]{4,})\s*원", text, re.IGNORECASE)
+    if m:
+        return _parse_number(m.group(1))
+
+    return None
+
+
+def _extract_securities_firm(text: str) -> Optional[str]:
+    # Prefer explicit Korean firm name
+    m = re.search(r"([가-힣]{2,8}(?:증권|투자증권|금융투자|자산운용))", text)
+    if m:
+        return m.group(1)
+
+    # Fallback: parse email domain
+    m = re.search(r"@([\w]+)\.com", text, re.IGNORECASE)
+    if m:
+        domain = m.group(1).lower()
+        # Try full domain first, then prefix
+        if domain in _DOMAIN_FIRM_MAP:
+            return _DOMAIN_FIRM_MAP[domain]
+        for key in _DOMAIN_FIRM_MAP:
+            if domain.startswith(key):
+                return _DOMAIN_FIRM_MAP[key]
+
+    return None
+
+
+def _extract_date(text: str) -> Optional[str]:
+    for pattern in _DATE_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 2000 <= y <= 2100 and 1 <= mo <= 12 and 1 <= d <= 31:
+                return f"{y:04d}-{mo:02d}-{d:02d}"
+    return None
+
+
+def _extract_thesis(text: str) -> str:
+    for pattern in _THESIS_HEADERS:
+        m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        if m:
+            raw = m.group(1).strip()
+            return re.sub(r"\s+", " ", raw)[:600]
+    # Fallback: first substantive lines
+    lines = [ln.strip() for ln in text.split("\n") if len(ln.strip()) > 30]
+    return " ".join(lines[:6])[:400]
+
+
+# ---------------------------------------------------------------------------
+# Public API  (swap this body for an LLM call; keep the return schema)
+# ---------------------------------------------------------------------------
+
+def extract_report_data(pdf_data: dict) -> dict:
+    pages = pdf_data["pages"]
+    full_text = pdf_data["full_text"]
+
+    # Use first two pages for header fields (less noise)
+    header = pages[0]["text"] if pages else ""
+    if len(pages) > 1:
+        header += "\n" + pages[1]["text"]
+
+    company = _extract_company(header)
+    rating_raw = _first_match(header, _RATING_PATTERNS, group=1,
+                               flags=re.IGNORECASE | re.MULTILINE)
+    target_price = _extract_target_price(header)
+    current_price = _extract_current_price(header)
+    securities = _extract_securities_firm(header)
+    analyst = _first_match(header, _ANALYST_PATTERNS, group=1)
+    date = _extract_date(header) or _extract_date(full_text)
+    thesis = _extract_thesis(full_text)
+
+    return {
+        "filename": pdf_data["filename"],
+        "company": company,
+        "rating_raw": rating_raw,
+        "target_price": target_price,
+        "current_price": current_price,
+        "securities_firm": securities,
+        "analyst": analyst,
+        "date": date,
+        "thesis": thesis,
+        "page_count": pdf_data["page_count"],
+    }

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Command *)",
+      "PowerShell(py *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe\" --version 2>$null)",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" --version 2>$null)",
+      "PowerShell(winget install *)",
+      "PowerShell(git *)",
+      "PowerShell(git add *)"
+    ]
+  }
+}
