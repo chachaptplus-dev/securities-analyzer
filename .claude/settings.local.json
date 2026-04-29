@@ -8,7 +8,9 @@
       "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" --version 2>$null)",
       "PowerShell(winget install *)",
       "PowerShell(git *)",
-      "PowerShell(git add *)"
+      "PowerShell(git add *)",
+      "PowerShell(git commit *)",
+      "Bash(git *)"
     ]
   }
 }

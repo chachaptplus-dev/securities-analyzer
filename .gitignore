@@ -15,9 +15,14 @@ env/
 
 # Data & uploads (PDFs may contain sensitive info)
 data/uploads/
+data/*.db
 data/*.duckdb
 data/*.txt
 data/*.csv
+
+# Environment variables
+.env
+.env.*
 
 # Streamlit
 .streamlit/secrets.toml
