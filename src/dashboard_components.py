@@ -11,6 +11,7 @@ from src.sector_intelligence import (
     sector_cooccurrence,
     weekly_sector_counts,
 )
+from src.macro_analyzer import explain_buy_reason, THEME_COLORS, _DEFAULT_BADGE_COLOR
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +466,63 @@ def render_company_tab(df: pd.DataFrame) -> None:
     m3.metric("평균 목표주가", f"{avg_tp:,.0f}원" if pd.notna(avg_tp) else "N/A")
     avg_up = cdf["upside"].mean()
     m4.metric("평균 업사이드", f"{avg_up:.1f}%" if pd.notna(avg_up) else "N/A")
+
+    # ── 왜 매수인가? ──────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("🧭 왜 매수인가?")
+
+    buy_rows_macro = (
+        cdf[cdf["rating_normalized"] == "BUY"]
+        .dropna(subset=["thesis"])
+        .sort_values("report_date", ascending=False)
+        .head(5)
+    )
+    combined_thesis = " ".join(buy_rows_macro["thesis"].tolist())
+    sector_val = (
+        cdf["sector"].dropna().mode().iloc[0]
+        if cdf["sector"].notna().any() else None
+    )
+    macro = explain_buy_reason(selected, sector_val, combined_thesis)
+
+    if macro["confidence"] == "low":
+        st.info("매크로 연결고리를 찾지 못했습니다")
+    else:
+        # Chain — coloured boxes with arrows
+        chain_parts = [p.strip() for p in macro["chain"].split("→")]
+        box_colors = ["#1565C0", "#2E7D32", "#6A1B9A"]
+        boxes = []
+        for part, color in zip(chain_parts, box_colors):
+            boxes.append(
+                f'<span style="background:{color};color:#fff;padding:4px 12px;'
+                f'border-radius:4px;font-weight:bold;font-size:14px">{part}</span>'
+            )
+        chain_html = (
+            ' <span style="color:#9E9E9E;font-size:18px;vertical-align:middle">→</span> '
+            .join(boxes)
+        )
+        st.markdown(chain_html, unsafe_allow_html=True)
+        st.write("")
+
+        # Theme badges
+        if macro["themes"]:
+            badges = []
+            for t in macro["themes"]:
+                color = THEME_COLORS.get(t, _DEFAULT_BADGE_COLOR)
+                badges.append(
+                    f'<span style="background:{color};color:#fff;padding:2px 10px;'
+                    f'border-radius:12px;font-size:13px;margin-right:4px">{t}</span>'
+                )
+            st.markdown("**매크로 테마** &nbsp; " + "".join(badges), unsafe_allow_html=True)
+
+        # Matched keywords
+        if macro["keywords"]:
+            kw_md = "  ".join(f"`{kw}`" for kw in macro["keywords"])
+            st.markdown("**핵심 키워드** &nbsp; " + kw_md)
+
+        # Summary
+        st.info(macro["summary"])
+
+    st.divider()
 
     if cdf["target_price"].notna().any():
         fig = go.Figure()
