@@ -41,17 +41,18 @@ def weekly_sector_counts(df: pd.DataFrame) -> pd.DataFrame:
 
 def detect_surges(
     df: pd.DataFrame,
-    recent_weeks: int = 4,
-    min_recent: int = 2,
-    spike_ratio: float = 3.0,
-    rising_ratio: float = 2.0,
-    growing_ratio: float = 1.5,
+    recent_days: int = 30,
+    min_recent: int = 3,
+    spike_ratio: float = 4.0,
+    rising_ratio: float = 3.0,
+    growing_ratio: float = 2.0,
 ) -> pd.DataFrame:
     """
-    Compare the last `recent_weeks` weeks against the equal window before that.
+    Compare the last `recent_days` days against the equal window before that.
     Only flags sectors with at least `min_recent` reports in the recent window.
 
-    Returns columns: sector, recent, prior, ratio, tier (emoji label).
+    Returns columns: sector, recent_n, prior_n, ratio, tier (emoji label).
+    Tiers: 🔴 급등 (≥4×) · 🟠 상승 (≥3×) · 🟡 증가 (≥2×)
     """
     work = df[df["sector"].notna() & df["report_date"].notna()].copy()
     if work.empty:
@@ -59,8 +60,8 @@ def detect_surges(
 
     work = _sanitise_dates(work)
     max_date = work["report_date"].max()
-    cut_mid   = max_date - pd.Timedelta(weeks=recent_weeks)
-    cut_start = cut_mid  - pd.Timedelta(weeks=recent_weeks)
+    cut_mid   = max_date - pd.Timedelta(days=recent_days)
+    cut_start = cut_mid  - pd.Timedelta(days=recent_days)
 
     recent = work[work["report_date"] >  cut_mid].groupby("sector").size()
     prior  = work[(work["report_date"] > cut_start) &
@@ -76,14 +77,12 @@ def detect_surges(
         if ratio < growing_ratio:
             continue
 
-        if ratio == float("inf"):
-            tier = "🔴 Spike"
-        elif ratio >= spike_ratio:
-            tier = "🔴 Spike"
+        if ratio == float("inf") or ratio >= spike_ratio:
+            tier = "🔴 급등"
         elif ratio >= rising_ratio:
-            tier = "🟠 Rising"
+            tier = "🟠 상승"
         else:
-            tier = "🟡 Growing"
+            tier = "🟡 증가"
 
         rows.append({
             "sector": s,

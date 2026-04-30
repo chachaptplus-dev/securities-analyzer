@@ -329,22 +329,28 @@ def render_sector_trends_tab(df: pd.DataFrame) -> None:
     # ── Surge Detection ──────────────────────────────────────────────────────
     st.divider()
     st.subheader("Surge Detection")
-    st.caption("Comparing last 4 weeks vs. the prior 4 weeks")
+    st.caption("최근 30일 vs 이전 30일 비교 · 최소 3건 · ≥2× 배율")
 
     surges = detect_surges(tagged)
+    total_sectors = len(sector_stats)
+
     if surges.empty:
-        st.info("No sector surges detected (need ≥2 reports in recent window and ≥1.5× ratio).")
+        st.success("현재 급증 섹터 없음 (정상 범위)")
+    elif len(surges) >= total_sectors * 0.8:
+        st.warning(
+            "데이터가 특정 기간에 집중되어 있어 급증 감지가 부정확할 수 있습니다"
+        )
     else:
         cols = st.columns(min(len(surges), 4))
         for i, (_, row) in enumerate(surges.iterrows()):
             if i >= 8:
                 break
             col = cols[i % 4]
-            ratio_str = f"{row['ratio']:.1f}×" if row["ratio"] is not None else "new"
+            ratio_str = f"{row['ratio']:.1f}×" if row["ratio"] is not None else "신규"
             col.metric(
                 label=f"{row['tier']}  {row['sector']}",
                 value=f"{row['recent_n']} reports",
-                delta=f"{ratio_str} vs prior 4w  (was {row['prior_n']})",
+                delta=f"{ratio_str} vs 이전 30일 (이전 {row['prior_n']}건)",
             )
 
     # ── Weekly Trend ─────────────────────────────────────────────────────────
