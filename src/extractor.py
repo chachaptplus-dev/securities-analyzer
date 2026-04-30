@@ -90,6 +90,46 @@ def lookup_company_by_code(code: str) -> Optional[str]:
     return _load_stock_master().get(code.strip())
 
 
+# Reverse index: normalised name → canonical name (built lazily from stock master)
+_STOCK_MASTER_BY_NAME: Optional[dict[str, str]] = None
+
+_NORM_NAME_RE = re.compile(r"[\s.·&]")
+
+
+def _load_name_index() -> dict[str, str]:
+    global _STOCK_MASTER_BY_NAME
+    if _STOCK_MASTER_BY_NAME is not None:
+        return _STOCK_MASTER_BY_NAME
+    _STOCK_MASTER_BY_NAME = {
+        _NORM_NAME_RE.sub("", name).lower(): name
+        for name in _load_stock_master().values()
+    }
+    return _STOCK_MASTER_BY_NAME
+
+
+def _reverse_lookup_name(name: str) -> Optional[str]:
+    """Return canonical stock-master name if input normalises to a match, else None."""
+    key = _NORM_NAME_RE.sub("", name).lower()
+    return _load_name_index().get(key)
+
+
+def _extract_company_from_thesis(thesis: str) -> Optional[str]:
+    """
+    Fix H — thesis-lead fallback.
+    If thesis opens with 'CompanyName의 ...', return CompanyName.
+    Rejects candidates that start with a digit (avoids '4Q25의', '1분기의').
+    """
+    m = re.match(r"^([가-힣A-Za-z0-9·&. ]{2,15}?)의\s", thesis.strip())
+    if not m:
+        return None
+    candidate = m.group(1).strip()
+    if len(candidate) < 2 or candidate[0].isdigit():
+        return None
+    if not (re.search(r"[가-힣]", candidate) or re.search(r"[A-Za-z]{2,}", candidate)):
+        return None
+    return candidate
+
+
 def _extract_code_from_header(text: str) -> Optional[str]:
     """
     Pull the first plausible 6-digit KRX stock code from PDF header text.
@@ -490,15 +530,21 @@ def extract_report_data(pdf_data: dict) -> dict:
     if len(pages) > 1:
         header += "\n" + pages[1]["text"]
 
+    thesis = _extract_thesis(full_text)
+
     # Fix G: company extraction priority
     #   1st) 6-digit code from header → stock_master lookup
-    #   2nd) regex name extraction fallback
-    #   3rd) None
+    #   2nd) regex name extraction from header
+    #   3rd) thesis-lead fallback: "CompanyName의 ..." (Fix H)
     code = _extract_code_from_header(header)
     company = lookup_company_by_code(code) if code else None
     if not company:
         company = _extract_company(header)
     company = _clean_company(company)
+    if not company:
+        lead = _extract_company_from_thesis(thesis)
+        if lead:
+            company = _clean_company(_reverse_lookup_name(lead) or lead)
 
     rating_raw = _first_match(header, _RATING_PATTERNS, group=1,
                                flags=re.IGNORECASE | re.MULTILINE)
@@ -506,9 +552,8 @@ def extract_report_data(pdf_data: dict) -> dict:
     current_price = _extract_current_price(header)
     securities = _extract_securities_firm(header)
     analyst = _first_match(header, _ANALYST_PATTERNS, group=1)
-    # Fix F: filename date fallback
-    date = _extract_date(header) or _extract_date(full_text) or _date_from_filename(filename)
-    thesis = _extract_thesis(full_text)
+    # Fix F: filename date is most reliable; PDF-internal extraction as fallback
+    date = _date_from_filename(filename) or _extract_date(header) or _extract_date(full_text)
 
     return {
         "filename": filename,

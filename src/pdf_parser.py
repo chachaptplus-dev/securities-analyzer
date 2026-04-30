@@ -1,5 +1,8 @@
+import re
 import fitz  # PyMuPDF
 from pathlib import Path
+
+_HAS_KOREAN = re.compile(r"[가-힣]")
 
 
 def extract_text_from_pdf(pdf_path: str) -> dict:
@@ -15,6 +18,9 @@ def extract_text_from_pdf(pdf_path: str) -> dict:
     metadata = doc.metadata
     doc.close()
 
+    stripped = full_text.strip()
+    scanned = len(stripped) < 200 and not _HAS_KOREAN.search(stripped)
+
     return {
         "path": str(pdf_path),
         "filename": Path(pdf_path).name,
@@ -22,5 +28,5 @@ def extract_text_from_pdf(pdf_path: str) -> dict:
         "full_text": full_text,
         "metadata": metadata,
         "page_count": len(pages),
-        "scanned": len(full_text.strip()) < 50,
+        "scanned": scanned,
     }
