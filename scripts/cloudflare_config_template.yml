@@ -1,0 +1,9 @@
+# Copy this file to C:\Users\김이경\.cloudflared\config.yml
+# Replace TUNNEL_ID with the actual ID from: cloudflared tunnel list
+
+tunnel: securities-analyzer
+credentials-file: C:\Users\김이경\.cloudflared\TUNNEL_ID.json
+
+ingress:
+  - service: http://localhost:8501
+  - service: http_status:404

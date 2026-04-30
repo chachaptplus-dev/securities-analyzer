@@ -81,6 +81,44 @@ try {
         -Description "Monthly refresh of stock_master.csv (checks date internally)"
 }
 
+# Task 5: Streamlit app — start on login
+$settingsAlways = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 0) `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1)
+
+$actionSt = New-ScheduledTaskAction `
+    -Execute "py" `
+    -Argument "-3 -m streamlit run app.py" `
+    -WorkingDirectory $ProjectDir
+
+Register-ScheduledTask `
+    -TaskName   "SecuritiesAnalyzer-Streamlit" `
+    -Action     $actionSt `
+    -Trigger    (New-ScheduledTaskTrigger -AtLogOn) `
+    -Settings   $settingsAlways `
+    -Description "Start Streamlit app on login" `
+    -RunLevel   Highest `
+    -Force | Out-Null
+
+Write-Output "  [OK] SecuritiesAnalyzer-Streamlit"
+
+# Task 6: Cloudflare Tunnel — start on login (after Streamlit)
+$actionCf = New-ScheduledTaskAction `
+    -Execute "cloudflared" `
+    -Argument "tunnel run securities-analyzer"
+
+Register-ScheduledTask `
+    -TaskName   "SecuritiesAnalyzer-Tunnel" `
+    -Action     $actionCf `
+    -Trigger    (New-ScheduledTaskTrigger -AtLogOn) `
+    -Settings   $settingsAlways `
+    -Description "Start Cloudflare Tunnel on login" `
+    -RunLevel   Highest `
+    -Force | Out-Null
+
+Write-Output "  [OK] SecuritiesAnalyzer-Tunnel"
+
 Write-Output ""
 Write-Output "=== Registration complete ==="
 Write-Output ""
