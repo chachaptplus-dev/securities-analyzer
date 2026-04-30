@@ -52,8 +52,12 @@ def save_weekly_report(report: dict) -> None:
     )
 
 
-def load_latest_report() -> dict | None:
-    """Return the most recent saved report if within 24h, else None."""
+def load_latest_report(force: bool = False) -> dict | None:
+    """Return the most recent saved report if within 24h, else None.
+    If force=True, skip the file entirely (used by force-regenerate button).
+    """
+    if force:
+        return None
     if not _REPORTS_PATH.exists():
         return None
     try:

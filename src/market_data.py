@@ -107,7 +107,7 @@ def get_macro_data(period: str = "3mo") -> dict:
     full = full.sort_index().ffill().dropna(how="all")
 
     # --- compute multi-period changes from full 6mo series ---
-    _PERIOD_DAYS = {"d1": 1, "w1": 7, "m1": 30, "m3": 91}
+    _PERIOD_DAYS = {"d1": 1, "w1": 7, "m1": 30, "m3": 91, "m6": 183}
     last_date = full.index[-1]
     changes: dict[str, dict] = {}
     for col in full.columns:

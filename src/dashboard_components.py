@@ -1128,15 +1128,19 @@ def _render_mi_new_themes(df: pd.DataFrame) -> None:
                 st.caption(f"관련 종목: {companies}")
 
 
-def _run_weekly_report(df: pd.DataFrame) -> None:
+def _run_weekly_report(df: pd.DataFrame, force: bool = False) -> None:
     with st.spinner("Claude Haiku 분석 중..."):
+        if force:
+            # Clear cached result so _c_weekly_report re-calls the LLM
+            st.cache_data.clear()
         report = _c_weekly_report(df)
         st.session_state["weekly_report"] = report
         st.session_state["weekly_report_time"] = datetime.now()
-        try:
-            save_weekly_report(report)
-        except Exception as e:
-            print(f"[dashboard] 리포트 저장 실패: {e}")
+        if not report.get("fallback"):
+            try:
+                save_weekly_report(report)
+            except Exception as e:
+                print(f"[dashboard] 리포트 저장 실패: {e}")
 
 
 def _render_mi_weekly(df: pd.DataFrame) -> None:
@@ -1173,7 +1177,7 @@ def _render_mi_weekly(df: pd.DataFrame) -> None:
         if ts:
             st.caption(f"마지막 생성: {ts}")
         if st.button("🔄 강제 재생성", key="btn_weekly_force", type="secondary"):
-            _run_weekly_report(df)
+            _run_weekly_report(df, force=True)
             st.rerun()
         st.caption("생성 비용 ≈ $0.007 (약 10원)")
 
@@ -1349,17 +1353,20 @@ def _pct_span(val: float | None) -> str:
     return f'<span style="color:{color}">{arrow} {val:+.2f}%</span>'
 
 
+_PERIOD_CHANGE_KEY = {"1mo": ("m1", "1달"), "3mo": ("m3", "3달"), "6mo": ("m6", "6달")}
+
+
 def _render_mi_macro(_df: pd.DataFrame) -> None:
     st.subheader("📈 매크로 지표")
 
+    period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo"}
+    period_sel = st.radio(
+        "기간", list(period_map.keys()), horizontal=True, key="macro_period", index=1,
+    )
+    period = period_map[period_sel]
+    change_key, change_label = _PERIOD_CHANGE_KEY[period]
+
     with st.spinner("시장 데이터 불러오는 중..."):
-        # period arg controls chart slice; cards always show all windows
-        period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo"}
-        period_sel = st.radio(
-            "차트 기간", list(period_map.keys()), horizontal=True, key="macro_period",
-            index=1,
-        )
-        period = period_map[period_sel]
         macro = _c_macro_data(period)
 
     if not macro or macro.get("prices", pd.DataFrame()).empty:
@@ -1369,25 +1376,23 @@ def _render_mi_macro(_df: pd.DataFrame) -> None:
     prices  = macro["prices"]
     changes = macro["changes"]
 
-    # ── Metric cards (all periods always shown) ───────────────────────────────
+    # ── Metric cards: 현재값 + 오늘 변화 + 선택 기간 변화 ────────────────────
     cols = st.columns(6)
     for i, (col_key, (label, fmt)) in enumerate(_MACRO_LABELS.items()):
         ch = changes.get(col_key)
         if ch is None:
             continue
-        cur_str = fmt.format(ch["current"])
-        d1_html  = _pct_span(ch.get("d1"))
-        w1_html  = _pct_span(ch.get("w1"))
-        m1_html  = _pct_span(ch.get("m1"))
-        m3_html  = _pct_span(ch.get("m3"))
+        cur_str    = fmt.format(ch["current"])
+        d1_html    = _pct_span(ch.get("d1"))
+        period_html = _pct_span(ch.get(change_key))
         card_html = (
-            f'<div style="border:1px solid #444;border-radius:8px;padding:10px 8px;text-align:center">'
-            f'<div style="font-size:11px;color:#9E9E9E;margin-bottom:4px">{label}</div>'
-            f'<div style="font-size:20px;font-weight:700;margin-bottom:6px">{cur_str}</div>'
-            f'<div style="font-size:10px;line-height:1.8">'
+            f'<div style="border:1px solid #3a3a3a;border-radius:10px;'
+            f'padding:14px 10px;text-align:center;min-height:110px">'
+            f'<div style="font-size:12px;color:#9E9E9E;margin-bottom:6px">{label}</div>'
+            f'<div style="font-size:22px;font-weight:700;margin-bottom:10px">{cur_str}</div>'
+            f'<div style="font-size:12px;line-height:2">'
             f'오늘 {d1_html}<br>'
-            f'1주 {w1_html} &nbsp; 1달 {m1_html}<br>'
-            f'3달 {m3_html}'
+            f'{change_label} {period_html}'
             f'</div>'
             f'</div>'
         )
