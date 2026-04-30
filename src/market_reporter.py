@@ -258,7 +258,12 @@ def generate_weekly_report(df: pd.DataFrame) -> dict:
 
     try:
         import anthropic
-        client   = anthropic.Anthropic()
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        except Exception:
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+        client   = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=_MODEL,
             max_tokens=4096,

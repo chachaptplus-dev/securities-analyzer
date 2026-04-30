@@ -4,6 +4,7 @@ Run: streamlit run app.py
 """
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,14 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 import streamlit as st
+
+# Bridge Streamlit Cloud secrets → environment variables
+try:
+    _secrets_key = st.secrets.get("ANTHROPIC_API_KEY")
+    if _secrets_key and not os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["ANTHROPIC_API_KEY"] = _secrets_key
+except Exception:
+    pass
 
 from src.clustering import cluster_theses
 from src.dashboard_components import (
@@ -32,6 +41,21 @@ from src.sector import infer_sector
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+_SAMPLE_PATH = Path("data/sample_reports.csv")
+
+
+def _load_demo_data() -> bool:
+    """Insert sample CSV into an empty DB for Streamlit Cloud demo. Returns True if loaded."""
+    if not _SAMPLE_PATH.exists():
+        return False
+    try:
+        df = pd.read_csv(_SAMPLE_PATH)
+        for _, row in df.iterrows():
+            insert_report(row.to_dict())
+        return True
+    except Exception:
+        return False
 
 _PERIOD_DAYS: dict[str, int | None] = {
     "전체": None, "3개월": 91, "2개월": 61, "1개월": 31, "2주": 14,
@@ -160,6 +184,13 @@ def main() -> None:
 
     all_reports = get_all_reports()
 
+    # On Streamlit Cloud the DB starts empty — load sample data for demo
+    demo_mode = False
+    if all_reports.empty:
+        demo_mode = _load_demo_data()
+        if demo_mode:
+            all_reports = get_all_reports()
+
     # Seed session_state default so filtered_reports is computable before sidebar renders
     if _PERIOD_KEY not in st.session_state:
         st.session_state[_PERIOD_KEY] = "전체"
@@ -169,6 +200,8 @@ def main() -> None:
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.title("📊 증권 리포트 분석기")
+        if demo_mode:
+            st.info("🎭 **데모 모드** — 샘플 데이터 50건 표시 중\nPDF를 업로드하면 실제 모드로 전환됩니다.")
         st.divider()
 
         # Metrics reflect the filtered window

@@ -19,7 +19,9 @@ data/*.db
 data/*.duckdb
 data/*.txt
 data/*.csv
+!data/sample_reports.csv
 data/*.pem
+data/*.json
 
 # Environment variables
 .env
