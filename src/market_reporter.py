@@ -232,7 +232,7 @@ def generate_weekly_report(df: pd.DataFrame) -> dict:
         client   = anthropic.Anthropic()
         response = client.messages.create(
             model=_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.content[0].text.strip()
