@@ -25,6 +25,7 @@ from src.macro_analyzer import (
     _DEFAULT_BADGE_COLOR,
 )
 from src.scoring import get_analyst_scores
+from src.market_reporter import generate_weekly_report
 
 
 # ---------------------------------------------------------------------------
@@ -909,6 +910,11 @@ def _c_analyst_scores(df: pd.DataFrame) -> pd.DataFrame:
     return get_analyst_scores(df)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _c_weekly_report(df: pd.DataFrame) -> dict:
+    return generate_weekly_report(df)
+
+
 def _build_network_figure(network: dict) -> go.Figure:
     nodes = network["nodes"]
     edges = network["edges"]
@@ -1109,6 +1115,86 @@ def _render_mi_new_themes(df: pd.DataFrame) -> None:
                 st.caption(f"관련 종목: {companies}")
 
 
+def _render_mi_weekly(df: pd.DataFrame) -> None:
+    st.subheader("📰 주간 시장 리포트")
+    st.caption("최근 7일 증권사 리포트를 Claude Haiku가 분석한 주간 요약입니다.")
+
+    if st.button("🔄 리포트 생성", key="btn_weekly_report", type="primary"):
+        with st.spinner("Claude Haiku 분석 중..."):
+            st.session_state["weekly_report"] = _c_weekly_report(df)
+
+    report = st.session_state.get("weekly_report")
+    if report is None:
+        st.info("버튼을 눌러 리포트를 생성하세요.")
+        return
+
+    if report.get("fallback"):
+        st.warning("LLM 미사용 — 키워드 빈도 기반 결과입니다.")
+
+    generated_at = report.get("generated_at", "")
+    if generated_at:
+        st.caption(f"생성 시각: {generated_at}")
+
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        st.markdown("#### 🔥 핫 테마 TOP 5")
+        hot_themes = report.get("hot_themes") or []
+        for theme in hot_themes:
+            st.markdown(
+                f'<span style="background:#D32F2F;color:#fff;padding:3px 10px;'
+                f'border-radius:12px;font-size:13px;margin-right:4px">{theme}</span>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("")
+
+        why_hot = report.get("why_hot") or {}
+        if why_hot:
+            with st.expander("왜 핫한가?", expanded=False):
+                for theme, reason in why_hot.items():
+                    st.markdown(f"**{theme}**")
+                    st.caption(reason)
+
+        rotation = report.get("rotation") or "-"
+        st.markdown("#### 🔄 테마 로테이션")
+        st.markdown(
+            f'<div style="font-size:15px;padding:8px 12px;background:#1E1E2E;'
+            f'border-radius:8px;color:#E0E0E0">{rotation}</div>',
+            unsafe_allow_html=True,
+        )
+
+    with col_right:
+        consensus = report.get("consensus_variables") or []
+        st.markdown("#### 📌 공통 핵심 변수")
+        if consensus:
+            for var in consensus:
+                st.markdown(f"- {var}")
+        else:
+            st.caption("(없음)")
+
+        market_phase = report.get("market_phase") or "-"
+        st.markdown("#### 🌐 시장 국면")
+        st.info(market_phase)
+
+        next_watch = report.get("next_watch") or []
+        st.markdown("#### 👀 다음 주 주목 포인트")
+        if next_watch:
+            for item in next_watch:
+                st.markdown(f"- {item}")
+        else:
+            st.caption("(없음)")
+
+    st.divider()
+    lineage = report.get("theme_lineage") or "-"
+    st.markdown("#### 🧬 테마 계보")
+    styled = lineage.replace("→", ' <span style="color:#FF7043;font-weight:bold">→</span> ')
+    st.markdown(
+        f'<div style="font-size:14px;padding:10px 16px;background:#1A237E22;'
+        f'border-left:4px solid #3F51B5;border-radius:4px">{styled}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_market_intelligence_tab(df: pd.DataFrame) -> None:
     st.header("📡 시장 인텔리전스")
 
@@ -1116,9 +1202,11 @@ def render_market_intelligence_tab(df: pd.DataFrame) -> None:
         st.info("분석할 데이터가 없습니다.")
         return
 
-    sub1, sub2, sub3, sub4 = st.tabs(
-        ["🔥 테마 모멘텀", "🕸️ 테마 네트워크", "🏆 애널리스트", "🆕 신규 테마"]
+    sub0, sub1, sub2, sub3, sub4 = st.tabs(
+        ["📰 주간 리포트", "🔥 테마 모멘텀", "🕸️ 테마 네트워크", "🏆 애널리스트", "🆕 신규 테마"]
     )
+    with sub0:
+        _render_mi_weekly(df)
     with sub1:
         _render_mi_momentum(df)
     with sub2:
