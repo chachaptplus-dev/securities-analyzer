@@ -507,12 +507,13 @@ def _infer_sentiment(thesis: str) -> Optional[str]:
 def extract_report_data(pdf_data: dict) -> dict:
     filename = pdf_data["filename"]
 
-    # Fix A: scanned / image-only PDF (< 50 chars extracted)
+    # Fix A: scanned / image-only PDF (< 200 chars, no Korean)
     if pdf_data.get("scanned"):
         return {
             "filename": filename,
             "company": None,
             "rating_raw": None,
+            "rating_normalized": "SCANNED",
             "target_price": None,
             "current_price": None,
             "securities_firm": None,
@@ -552,8 +553,14 @@ def extract_report_data(pdf_data: dict) -> dict:
     current_price = _extract_current_price(header)
     securities = _extract_securities_firm(header)
     analyst = _first_match(header, _ANALYST_PATTERNS, group=1)
-    # Fix F: filename date is most reliable; PDF-internal extraction as fallback
-    date = _date_from_filename(filename) or _extract_date(header) or _extract_date(full_text)
+    # Fix F: filename date wins; PDF-internal is fallback, discarded if year out of range
+    fn_date = _date_from_filename(filename)
+    pdf_date = _extract_date(header) or _extract_date(full_text)
+    if pdf_date:
+        y = int(pdf_date[:4])
+        if y < 2020 or y > 2027:
+            pdf_date = None
+    date = fn_date or pdf_date
 
     return {
         "filename": filename,
