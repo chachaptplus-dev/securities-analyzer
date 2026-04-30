@@ -80,7 +80,7 @@ def scrape(max_pages: int = DEFAULT_MAX_PAGES) -> int:
 
         urls = _extract_pdf_urls(soup)
         if not urls:
-            print(f"  No PDF links found on page {page} — stopping.")
+            print(f"  No PDF links found on page {page} - stopping.")
             break
 
         new_on_page = 0
@@ -102,7 +102,7 @@ def scrape(max_pages: int = DEFAULT_MAX_PAGES) -> int:
 
         # All PDFs on this page already exist → we've caught up
         if new_on_page == 0:
-            print("  All PDFs on this page already downloaded — stopping early.")
+            print("  All PDFs on this page already downloaded - stopping early.")
             break
 
         if page < max_pages:

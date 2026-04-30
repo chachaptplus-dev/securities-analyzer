@@ -10,7 +10,10 @@
       "PowerShell(git *)",
       "PowerShell(git add *)",
       "PowerShell(git commit *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "WebFetch(domain:finance.naver.com)",
+      "Bash(py *)",
+      "Bash(python *)"
     ]
   }
 }
