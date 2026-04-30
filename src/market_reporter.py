@@ -232,7 +232,7 @@ def generate_weekly_report(df: pd.DataFrame) -> dict:
         client   = anthropic.Anthropic()
         response = client.messages.create(
             model=_MODEL,
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.content[0].text.strip()
@@ -247,7 +247,9 @@ def generate_weekly_report(df: pd.DataFrame) -> dict:
         result.update(stats)
         return result
     except Exception as exc:
-        print(f"[market_reporter] LLM error — using fallback: {exc}")
+        import traceback
+        print(f"[market_reporter] LLM error - using fallback: {exc}")
+        traceback.print_exc()
         result = _fallback_weekly_report(df)
         result.update(stats)
         return result
