@@ -22,4 +22,5 @@ def extract_text_from_pdf(pdf_path: str) -> dict:
         "full_text": full_text,
         "metadata": metadata,
         "page_count": len(pages),
+        "scanned": len(full_text.strip()) < 50,
     }

@@ -103,6 +103,28 @@ def get_company_detail(company: str) -> pd.DataFrame:
     return df
 
 
+_UPDATABLE_FIELDS: frozenset[str] = frozenset({
+    "company", "rating_raw", "rating_normalized",
+    "target_price", "current_price", "upside",
+    "securities_firm", "analyst", "report_date",
+    "thesis", "sector",
+})
+
+
+def update_report(report_id: int, fields: dict) -> None:
+    """Update whitelisted fields for an existing row by primary key."""
+    safe = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
+    if not safe:
+        return
+    con = _con()
+    set_clause = ", ".join(f"{k} = ?" for k in safe)
+    con.execute(
+        f"UPDATE reports SET {set_clause} WHERE id = ?",
+        list(safe.values()) + [report_id],
+    )
+    con.close()
+
+
 def clear_all() -> None:
     con = _con()
     con.execute("DELETE FROM reports")
