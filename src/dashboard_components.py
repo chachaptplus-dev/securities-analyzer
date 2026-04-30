@@ -26,7 +26,7 @@ from src.macro_analyzer import (
     _DEFAULT_BADGE_COLOR,
 )
 from src.scoring import get_analyst_scores
-from src.market_reporter import generate_weekly_report
+from src.market_reporter import generate_weekly_report, save_weekly_report, load_latest_report
 from src.market_data import get_macro_data
 from src.signal_tracker import evaluate_past_signals
 
@@ -919,7 +919,7 @@ def _c_weekly_report(df: pd.DataFrame) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _c_macro_data(period: str) -> pd.DataFrame:
+def _c_macro_data(period: str) -> dict:
     return get_macro_data(period)
 
 
@@ -1130,13 +1130,30 @@ def _render_mi_new_themes(df: pd.DataFrame) -> None:
 
 def _run_weekly_report(df: pd.DataFrame) -> None:
     with st.spinner("Claude Haiku 분석 중..."):
-        st.session_state["weekly_report"] = _c_weekly_report(df)
+        report = _c_weekly_report(df)
+        st.session_state["weekly_report"] = report
         st.session_state["weekly_report_time"] = datetime.now()
+        try:
+            save_weekly_report(report)
+        except Exception as e:
+            print(f"[dashboard] 리포트 저장 실패: {e}")
 
 
 def _render_mi_weekly(df: pd.DataFrame) -> None:
     st.subheader("📰 주간 시장 리포트")
     st.caption("최근 7일 증권사 리포트를 Claude Haiku가 분석한 주간 요약입니다.")
+
+    # Restore from file on fresh app load (session_state is empty after restart)
+    if "weekly_report" not in st.session_state:
+        saved = load_latest_report()
+        if saved is not None:
+            st.session_state["weekly_report"] = saved
+            try:
+                st.session_state["weekly_report_time"] = datetime.strptime(
+                    saved["generated_at"], "%Y-%m-%d %H:%M"
+                )
+            except Exception:
+                st.session_state["weekly_report_time"] = None
 
     report = st.session_state.get("weekly_report")
     report_time: datetime | None = st.session_state.get("weekly_report_time")
@@ -1323,59 +1340,75 @@ _MACRO_LABELS = {
 }
 
 
+def _pct_span(val: float | None) -> str:
+    """Render a pct change as a colored HTML span, or '—' if None."""
+    if val is None:
+        return '<span style="color:#9E9E9E">—</span>'
+    color = "#2E7D32" if val >= 0 else "#C62828"
+    arrow = "↑" if val >= 0 else "↓"
+    return f'<span style="color:{color}">{arrow} {val:+.2f}%</span>'
+
+
 def _render_mi_macro(_df: pd.DataFrame) -> None:
     st.subheader("📈 매크로 지표")
 
-    period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo"}
-    period_sel = st.radio(
-        "기간", list(period_map.keys()), horizontal=True, key="macro_period"
-    )
-    period = period_map[period_sel]
-
     with st.spinner("시장 데이터 불러오는 중..."):
+        # period arg controls chart slice; cards always show all windows
+        period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo"}
+        period_sel = st.radio(
+            "차트 기간", list(period_map.keys()), horizontal=True, key="macro_period",
+            index=1,
+        )
+        period = period_map[period_sel]
         macro = _c_macro_data(period)
 
-    if macro.empty:
+    if not macro or macro.get("prices", pd.DataFrame()).empty:
         st.warning("매크로 데이터 수집 실패 (네트워크 확인)")
         return
 
-    # ── Metric cards ─────────────────────────────────────────────────────────
+    prices  = macro["prices"]
+    changes = macro["changes"]
+
+    # ── Metric cards (all periods always shown) ───────────────────────────────
     cols = st.columns(6)
-    week_ago = macro.index[-1] - pd.Timedelta(days=7)
-    prev_row  = macro[macro.index <= week_ago]
-    prev_vals = prev_row.iloc[-1] if not prev_row.empty else None
-    last_row  = macro.iloc[-1]
-
     for i, (col_key, (label, fmt)) in enumerate(_MACRO_LABELS.items()):
-        if col_key not in macro.columns:
+        ch = changes.get(col_key)
+        if ch is None:
             continue
-        cur = float(last_row[col_key])
-        cur_str = fmt.format(cur)
-        delta_str = None
-        if prev_vals is not None and col_key in prev_vals.index:
-            prev = float(prev_vals[col_key])
-            if prev > 0:
-                pct = (cur - prev) / prev * 100
-                delta_str = f"{pct:+.2f}%"
-        cols[i].metric(label, cur_str, delta_str)
+        cur_str = fmt.format(ch["current"])
+        d1_html  = _pct_span(ch.get("d1"))
+        w1_html  = _pct_span(ch.get("w1"))
+        m1_html  = _pct_span(ch.get("m1"))
+        m3_html  = _pct_span(ch.get("m3"))
+        card_html = (
+            f'<div style="border:1px solid #444;border-radius:8px;padding:10px 8px;text-align:center">'
+            f'<div style="font-size:11px;color:#9E9E9E;margin-bottom:4px">{label}</div>'
+            f'<div style="font-size:20px;font-weight:700;margin-bottom:6px">{cur_str}</div>'
+            f'<div style="font-size:10px;line-height:1.8">'
+            f'오늘 {d1_html}<br>'
+            f'1주 {w1_html} &nbsp; 1달 {m1_html}<br>'
+            f'3달 {m3_html}'
+            f'</div>'
+            f'</div>'
+        )
+        cols[i].markdown(card_html, unsafe_allow_html=True)
 
-    # ── Line chart ───────────────────────────────────────────────────────────
+    # ── Line chart (sliced to selected period) ────────────────────────────────
     st.markdown("---")
     fig = go.Figure()
 
     for col_key in ("kospi", "kosdaq"):
-        if col_key not in macro.columns:
+        if col_key not in prices.columns:
             continue
-        label = _MACRO_LABELS[col_key][0]
         fig.add_trace(go.Scatter(
-            x=macro.index, y=macro[col_key],
-            name=label, yaxis="y1",
+            x=prices.index, y=prices[col_key],
+            name=_MACRO_LABELS[col_key][0], yaxis="y1",
             mode="lines", line=dict(width=2),
         ))
 
-    if "usd_krw" in macro.columns:
+    if "usd_krw" in prices.columns:
         fig.add_trace(go.Scatter(
-            x=macro.index, y=macro["usd_krw"],
+            x=prices.index, y=prices["usd_krw"],
             name="원달러", yaxis="y2",
             mode="lines", line=dict(width=1.5, dash="dot"),
         ))

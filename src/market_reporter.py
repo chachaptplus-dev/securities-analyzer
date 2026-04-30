@@ -7,12 +7,14 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 
 
 _MODEL = "claude-haiku-4-5-20251001"
+_REPORTS_PATH = Path(__file__).resolve().parents[1] / "data" / "weekly_reports.json"
 
 _PROMPT_TEMPLATE = """\
 당신은 한국 주식시장 전문 애널리스트입니다.
@@ -33,6 +35,41 @@ _PROMPT_TEMPLATE = """\
 }}
 
 {context}"""
+
+
+def save_weekly_report(report: dict) -> None:
+    """Append report to data/weekly_reports.json, keeping the last 10."""
+    reports: list = []
+    if _REPORTS_PATH.exists():
+        try:
+            reports = json.loads(_REPORTS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            reports = []
+    reports.append(report)
+    reports = reports[-10:]
+    _REPORTS_PATH.write_text(
+        json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_latest_report() -> dict | None:
+    """Return the most recent saved report if within 24h, else None."""
+    if not _REPORTS_PATH.exists():
+        return None
+    try:
+        reports = json.loads(_REPORTS_PATH.read_text(encoding="utf-8"))
+        if not reports:
+            return None
+        latest = reports[-1]
+        generated_at = latest.get("generated_at")
+        if not generated_at:
+            return None
+        dt = datetime.strptime(generated_at, "%Y-%m-%d %H:%M")
+        if datetime.now() - dt <= timedelta(hours=24):
+            return latest
+        return None
+    except Exception:
+        return None
 
 
 def _build_weekly_context(df: pd.DataFrame) -> str:

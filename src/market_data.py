@@ -61,20 +61,34 @@ def _company_to_code(company: str) -> str | None:
     return str(rows.iloc[0]["code"]) if not rows.empty else None
 
 
-def get_macro_data(period: str = "3mo") -> pd.DataFrame:
+def get_macro_data(period: str = "3mo") -> dict:
     """
     매크로 지표 수집 (yfinance).
-    Returns DataFrame: date | kospi | kosdaq | usd_krw | us_10y | wti | dxy
+    Always fetches 6mo internally so all change windows are available.
+
+    Returns {
+        "prices": DataFrame,   # date × ticker, sliced to `period` — for chart
+        "changes": {           # multi-period pct changes — for metric cards
+            "<col>": {
+                "current": float,
+                "d1": float | None,   # 1-day %
+                "w1": float | None,   # 1-week %
+                "m1": float | None,   # 1-month %
+                "m3": float | None,   # 3-month %
+            }, ...
+        }
+    }
+    Returns {} on total failure.
     """
     try:
         import yfinance as yf
     except ImportError:
-        return pd.DataFrame()
+        return {}
 
     dfs: dict[str, pd.Series] = {}
     for name, ticker in _MACRO_TICKERS.items():
         try:
-            raw = yf.download(ticker, period=period, progress=False)
+            raw = yf.download(ticker, period="6mo", progress=False)
             if raw.empty:
                 continue
             close = raw["Close"]
@@ -86,12 +100,39 @@ def get_macro_data(period: str = "3mo") -> pd.DataFrame:
             print(f"[market_data] {name} ({ticker}) 수집 실패: {e}")
 
     if not dfs:
-        return pd.DataFrame()
+        return {}
 
-    result = pd.concat(dfs.values(), axis=1)
-    result.index = pd.to_datetime(result.index)
-    result = result.sort_index().ffill().dropna(how="all")
-    return result
+    full = pd.concat(dfs.values(), axis=1)
+    full.index = pd.to_datetime(full.index)
+    full = full.sort_index().ffill().dropna(how="all")
+
+    # --- compute multi-period changes from full 6mo series ---
+    _PERIOD_DAYS = {"d1": 1, "w1": 7, "m1": 30, "m3": 91}
+    last_date = full.index[-1]
+    changes: dict[str, dict] = {}
+    for col in full.columns:
+        series = full[col].dropna()
+        if series.empty:
+            continue
+        cur = float(series.iloc[-1])
+        entry: dict = {"current": cur}
+        for key, days in _PERIOD_DAYS.items():
+            cutoff = last_date - pd.Timedelta(days=days)
+            older = series[series.index <= cutoff]
+            if older.empty:
+                entry[key] = None
+            else:
+                prev = float(older.iloc[-1])
+                entry[key] = round((cur - prev) / prev * 100, 2) if prev else None
+        changes[col] = entry
+
+    # --- slice prices to the requested period for the chart ---
+    _CHART_DAYS = {"1mo": 30, "3mo": 91, "6mo": 183}
+    chart_days = _CHART_DAYS.get(period, 91)
+    chart_cutoff = last_date - pd.Timedelta(days=chart_days)
+    prices = full[full.index >= chart_cutoff]
+
+    return {"prices": prices, "changes": changes}
 
 
 def get_stock_price_history(
