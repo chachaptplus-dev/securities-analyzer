@@ -28,6 +28,20 @@ from src.sector import infer_sector
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+_PERIOD_DAYS: dict[str, int | None] = {
+    "전체": None, "3개월": 91, "2개월": 61, "1개월": 31, "2주": 14,
+}
+_PERIOD_KEY = "sidebar_date_period"
+
+
+def _apply_date_filter(df: pd.DataFrame, period: str) -> pd.DataFrame:
+    days = _PERIOD_DAYS.get(period)
+    if days is None or df.empty:
+        return df
+    dates = pd.to_datetime(df["report_date"], errors="coerce")
+    cutoff = dates.max() - pd.Timedelta(days=days)
+    return df[dates >= cutoff].copy()
+
 st.set_page_config(
     page_title="증권사 리포트 분석기",
     page_icon="📊",
@@ -89,25 +103,57 @@ def main() -> None:
 
     all_reports = get_all_reports()
 
-    # Sidebar
+    # Seed session_state default so filtered_reports is computable before sidebar renders
+    if _PERIOD_KEY not in st.session_state:
+        st.session_state[_PERIOD_KEY] = "전체"
+
+    filtered_reports = _apply_date_filter(all_reports, st.session_state[_PERIOD_KEY])
+
+    # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.title("📊 증권 리포트 분석기")
         st.divider()
+
+        # Metrics reflect the filtered window
         st.subheader("데이터 현황")
-        st.metric("총 리포트", len(all_reports))
-        if not all_reports.empty:
-            st.metric("종목 수", int(all_reports["company"].nunique()))
-            st.metric("증권사 수", int(all_reports["securities_firm"].nunique()))
+        st.metric("총 리포트", len(filtered_reports))
+        if not filtered_reports.empty:
+            st.metric("종목 수", int(filtered_reports["company"].nunique()))
+            st.metric("증권사 수", int(filtered_reports["securities_firm"].nunique()))
             st.metric(
                 "Buy 의견",
-                int((all_reports["rating_normalized"] == "BUY").sum()),
+                int((filtered_reports["rating_normalized"] == "BUY").sum()),
             )
+
+        # Date range filter
+        st.divider()
+        st.subheader("📅 기간 필터")
+        st.radio(
+            "기간",
+            list(_PERIOD_DAYS.keys()),
+            key=_PERIOD_KEY,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        # Active range caption
+        if not all_reports.empty:
+            dates = pd.to_datetime(all_reports["report_date"], errors="coerce")
+            max_d = dates.max()
+            days = _PERIOD_DAYS[st.session_state[_PERIOD_KEY]]
+            if days is not None:
+                cutoff = max_d - pd.Timedelta(days=days)
+                st.caption(f"{cutoff.date()} ~ {max_d.date()}")
+            else:
+                st.caption(f"{dates.min().date()} ~ {max_d.date()}")
+
         st.divider()
         if not all_reports.empty:
             if st.button("🗑 데이터 전체 초기화", type="secondary", use_container_width=True):
                 clear_all()
                 st.rerun()
 
+    # ── Tabs — all receive filtered_reports ──────────────────────────────────
     tab_upload, tab_reports, tab_buy, tab_sectors, tab_clusters, tab_company = st.tabs(
         ["📤 PDF Upload", "📋 Extracted Reports", "📈 Buy Stocks",
          "🌐 Sector Trends", "🔍 Thesis Clusters", "🏢 Company Detail"]
@@ -117,29 +163,29 @@ def main() -> None:
         render_upload_tab(_process_files)
 
     with tab_reports:
-        render_reports_tab(all_reports)
+        render_reports_tab(filtered_reports)
 
     with tab_buy:
-        scores = calculate_buy_signal_score(all_reports) if not all_reports.empty else pd.DataFrame()
-        render_buy_stocks_tab(all_reports, scores)
+        scores = calculate_buy_signal_score(filtered_reports) if not filtered_reports.empty else pd.DataFrame()
+        render_buy_stocks_tab(filtered_reports, scores)
 
     with tab_sectors:
-        render_sector_trends_tab(all_reports)
+        render_sector_trends_tab(filtered_reports)
 
     with tab_clusters:
-        theses_col = all_reports["thesis"] if not all_reports.empty else pd.Series([], dtype=str)
+        theses_col = filtered_reports["thesis"] if not filtered_reports.empty else pd.Series([], dtype=str)
         valid_theses = theses_col.fillna("").tolist()
         non_empty = [t for t in valid_theses if t.strip()]
 
         if len(non_empty) >= 2:
             n_clusters = min(5, max(2, len(non_empty) // 3))
             labels, cluster_names, cluster_terms = cluster_theses(valid_theses, n_clusters=n_clusters)
-            render_clusters_tab(all_reports, labels, cluster_names, cluster_terms)
+            render_clusters_tab(filtered_reports, labels, cluster_names, cluster_terms)
         else:
             st.info("클러스터링에는 최소 2개 이상의 투자근거 텍스트가 필요합니다.")
 
     with tab_company:
-        render_company_tab(all_reports)
+        render_company_tab(filtered_reports)
 
 
 if __name__ == "__main__":
