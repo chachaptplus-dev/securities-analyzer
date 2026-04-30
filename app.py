@@ -4,8 +4,11 @@ Run: streamlit run app.py
 """
 from __future__ import annotations
 
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import streamlit as st
 
@@ -41,6 +44,53 @@ def _apply_date_filter(df: pd.DataFrame, period: str) -> pd.DataFrame:
     dates = pd.to_datetime(df["report_date"], errors="coerce")
     cutoff = dates.max() - pd.Timedelta(days=days)
     return df[dates >= cutoff].copy()
+
+
+_LOG_PATHS = [Path("data/scraper.log"), Path("logs/scraper.log")]
+_DB_PATH   = "data/securities.duckdb"
+
+
+@st.cache_data(ttl=300)
+def _get_scraper_status() -> dict:
+    """
+    Returns {last_run: datetime|None, count: int, source: str}.
+    Tries log file first; falls back to DB MAX(uploaded_at).
+    """
+    # 1. Log file — use mtime as timestamp, parse count from last lines
+    for log_path in _LOG_PATHS:
+        if log_path.exists():
+            try:
+                mtime = datetime.fromtimestamp(log_path.stat().st_mtime)
+                count = 0
+                text = log_path.read_text(encoding="utf-8", errors="ignore")
+                for line in reversed(text.splitlines()[-30:]):
+                    m = re.search(r"(\d+)\s+new\s+PDF", line, re.IGNORECASE)
+                    if m:
+                        count = int(m.group(1))
+                        break
+                return {"last_run": mtime, "count": count, "source": "log"}
+            except Exception:
+                pass
+
+    # 2. DB fallback
+    try:
+        con = duckdb.connect(_DB_PATH, read_only=True)
+        row = con.execute("SELECT MAX(uploaded_at) FROM reports").fetchone()
+        last_run = row[0] if row and row[0] is not None else None
+        count = 0
+        if last_run is not None:
+            # Strip timezone if present
+            if hasattr(last_run, "tzinfo") and last_run.tzinfo is not None:
+                last_run = last_run.replace(tzinfo=None)
+            last_date = last_run.date()
+            result = con.execute(
+                "SELECT COUNT(*) FROM reports WHERE DATE(uploaded_at) = ?", [last_date]
+            ).fetchone()
+            count = result[0] if result else 0
+        con.close()
+        return {"last_run": last_run, "count": count, "source": "db"}
+    except Exception:
+        return {"last_run": None, "count": 0, "source": "error"}
 
 st.set_page_config(
     page_title="증권사 리포트 분석기",
@@ -146,6 +196,26 @@ def main() -> None:
                 st.caption(f"{cutoff.date()} ~ {max_d.date()}")
             else:
                 st.caption(f"{dates.min().date()} ~ {max_d.date()}")
+
+        # Scraper status
+        st.divider()
+        st.subheader("🤖 스크래퍼 현황")
+        scraper = _get_scraper_status()
+        lr = scraper["last_run"]
+        if lr is None:
+            st.caption("마지막 수집: 정보 없음")
+            st.caption("오늘 수집: 정보 없음")
+            st.caption("상태: 🔴 미실행")
+        else:
+            hours_ago = (datetime.now() - lr).total_seconds() / 3600
+            st.caption(f"마지막 수집: {lr.strftime('%Y-%m-%d %H:%M')}")
+            st.caption(f"오늘 수집: +{scraper['count']:,}건")
+            if hours_ago < 25:
+                st.caption("상태: 🟢 정상")
+            elif hours_ago < 48:
+                st.caption("상태: 🟡 지연")
+            else:
+                st.caption("상태: 🔴 미실행")
 
         st.divider()
         if not all_reports.empty:
