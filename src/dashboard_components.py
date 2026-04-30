@@ -94,9 +94,30 @@ def render_buy_stocks_tab(reports_df: pd.DataFrame, scores_df: pd.DataFrame) -> 
         st.info("분석 데이터가 없습니다.")
         return
 
-    top_n = min(20, len(scores_df))
+    # ── Sector filter ─────────────────────────────────────────────────────────
+    all_sectors = sorted(reports_df["sector"].dropna().unique().tolist()) if not reports_df.empty else []
+    sel_sectors = st.multiselect("섹터 필터", options=all_sectors, default=[],
+                                  placeholder="전체 섹터 (선택하면 필터)")
+
+    if sel_sectors:
+        sector_companies = (
+            reports_df[reports_df["sector"].isin(sel_sectors)]["company"]
+            .dropna().unique()
+        )
+        fscores  = scores_df[scores_df["company"].isin(sector_companies)].copy()
+        freports = reports_df[reports_df["sector"].isin(sel_sectors)].copy()
+    else:
+        fscores  = scores_df
+        freports = reports_df
+
+    if fscores.empty:
+        st.info("선택한 섹터에 Buy Signal 데이터가 없습니다.")
+        return
+
+    # ── Buy Signal Score bar chart ────────────────────────────────────────────
+    top_n = min(20, len(fscores))
     fig = px.bar(
-        scores_df.head(top_n),
+        fscores.head(top_n),
         x="company",
         y="score",
         color="score",
@@ -108,8 +129,9 @@ def render_buy_stocks_tab(reports_df: pd.DataFrame, scores_df: pd.DataFrame) -> 
     fig.update_layout(coloraxis_showscale=False, xaxis_tickangle=-30)
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Score breakdown table ─────────────────────────────────────────────────
     st.subheader("점수 구성 상세")
-    display = scores_df.copy()
+    display = fscores.copy()
     display.insert(0, "순위", range(1, len(display) + 1))
     st.dataframe(
         display.rename(
@@ -129,12 +151,18 @@ def render_buy_stocks_tab(reports_df: pd.DataFrame, scores_df: pd.DataFrame) -> 
         hide_index=True,
     )
 
-    if not reports_df.empty:
-        rc = reports_df["rating_normalized"].value_counts()
+    if freports.empty:
+        return
+
+    col_pie, col_bar = st.columns(2)
+
+    # ── Rating distribution pie ───────────────────────────────────────────────
+    with col_pie:
+        rc = freports["rating_normalized"].value_counts()
         fig2 = px.pie(
             values=rc.values,
             names=rc.index,
-            title="전체 투자의견 분포",
+            title="투자의견 분포",
             color_discrete_map={
                 "BUY": "#1976D2",
                 "HOLD": "#FF9800",
@@ -143,6 +171,29 @@ def render_buy_stocks_tab(reports_df: pd.DataFrame, scores_df: pd.DataFrame) -> 
             },
         )
         st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Sector Buy-rate bar chart ─────────────────────────────────────────────
+    with col_bar:
+        if "sector" in freports.columns and freports["sector"].notna().any():
+            sec_buy = (
+                freports.groupby("sector", observed=True)
+                .apply(lambda x: round((x["rating_normalized"] == "BUY").mean() * 100, 1))
+                .reset_index(name="buy_pct")
+                .sort_values("buy_pct", ascending=True)
+            )
+            fig3 = px.bar(
+                sec_buy,
+                x="buy_pct",
+                y="sector",
+                orientation="h",
+                color="buy_pct",
+                color_continuous_scale="Blues",
+                title="섹터별 Buy 비율 (%)",
+                labels={"buy_pct": "Buy 비율 (%)", "sector": ""},
+                text_auto=".1f",
+            )
+            fig3.update_layout(coloraxis_showscale=False, margin=dict(l=160))
+            st.plotly_chart(fig3, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
