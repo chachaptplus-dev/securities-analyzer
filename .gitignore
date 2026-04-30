@@ -23,6 +23,7 @@ data/*.csv
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # Streamlit
 .streamlit/secrets.toml
