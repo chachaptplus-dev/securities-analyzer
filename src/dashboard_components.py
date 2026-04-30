@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -1115,13 +1116,37 @@ def _render_mi_new_themes(df: pd.DataFrame) -> None:
                 st.caption(f"관련 종목: {companies}")
 
 
+def _run_weekly_report(df: pd.DataFrame) -> None:
+    with st.spinner("Claude Haiku 분석 중..."):
+        st.session_state["weekly_report"] = _c_weekly_report(df)
+        st.session_state["weekly_report_time"] = datetime.now()
+
+
 def _render_mi_weekly(df: pd.DataFrame) -> None:
     st.subheader("📰 주간 시장 리포트")
     st.caption("최근 7일 증권사 리포트를 Claude Haiku가 분석한 주간 요약입니다.")
 
-    if st.button("🔄 리포트 생성", key="btn_weekly_report", type="primary"):
-        with st.spinner("Claude Haiku 분석 중..."):
-            st.session_state["weekly_report"] = _c_weekly_report(df)
+    report = st.session_state.get("weekly_report")
+    report_time: datetime | None = st.session_state.get("weekly_report_time")
+
+    stale = report is None or (
+        report_time is not None and datetime.now() - report_time > timedelta(hours=24)
+    )
+
+    if stale:
+        if st.button("🔄 리포트 생성", key="btn_weekly_report", type="primary"):
+            _run_weekly_report(df)
+            st.rerun()
+        st.caption("생성 비용 ≈ $0.007 (약 10원)")
+    else:
+        ts = report_time.strftime("%Y-%m-%d %H:%M") if report_time else ""
+        st.success(f"✅ 오늘 리포트가 이미 생성되었습니다")
+        if ts:
+            st.caption(f"마지막 생성: {ts}")
+        if st.button("🔄 강제 재생성", key="btn_weekly_force", type="secondary"):
+            _run_weekly_report(df)
+            st.rerun()
+        st.caption("생성 비용 ≈ $0.007 (약 10원)")
 
     report = st.session_state.get("weekly_report")
     if report is None:
@@ -1130,10 +1155,6 @@ def _render_mi_weekly(df: pd.DataFrame) -> None:
 
     if report.get("fallback"):
         st.warning("LLM 미사용 — 키워드 빈도 기반 결과입니다.")
-
-    generated_at = report.get("generated_at", "")
-    if generated_at:
-        st.caption(f"생성 시각: {generated_at}")
 
     col_left, col_right = st.columns(2)
 
