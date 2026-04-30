@@ -27,6 +27,8 @@ from src.macro_analyzer import (
 )
 from src.scoring import get_analyst_scores
 from src.market_reporter import generate_weekly_report
+from src.market_data import get_macro_data
+from src.signal_tracker import evaluate_past_signals
 
 
 # ---------------------------------------------------------------------------
@@ -916,6 +918,16 @@ def _c_weekly_report(df: pd.DataFrame) -> dict:
     return generate_weekly_report(df)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _c_macro_data(period: str) -> pd.DataFrame:
+    return get_macro_data(period)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _c_signals() -> pd.DataFrame:
+    return evaluate_past_signals(lookback_days=30)
+
+
 def _build_network_figure(network: dict) -> go.Figure:
     nodes = network["nodes"]
     edges = network["edges"]
@@ -1207,12 +1219,214 @@ def _render_mi_weekly(df: pd.DataFrame) -> None:
 
     st.divider()
     lineage = report.get("theme_lineage") or "-"
+    logic_shift = report.get("logic_shift") or "-"
     st.markdown("#### 🧬 테마 계보")
     styled = lineage.replace("→", ' <span style="color:#FF7043;font-weight:bold">→</span> ')
     st.markdown(
         f'<div style="font-size:14px;padding:10px 16px;background:#1A237E22;'
         f'border-left:4px solid #3F51B5;border-radius:4px">{styled}</div>',
         unsafe_allow_html=True,
+    )
+    if logic_shift and logic_shift != "-":
+        st.caption(f"💡 투자 로직 변화: {logic_shift}")
+
+    # ── Section 1: 섹터별 변화 ──────────────────────────────────────────────
+    sector_changes = report.get("sector_changes") or []
+    if sector_changes:
+        st.divider()
+        st.markdown("#### 📊 섹터별 변화")
+        rows = []
+        for s in sector_changes:
+            delta_str = s["change"]
+            delta_int = int(delta_str.replace("+", ""))
+            color = "#2E7D32" if delta_int > 0 else ("#C62828" if delta_int < 0 else "#9E9E9E")
+            rows.append({
+                "섹터": s["sector"],
+                "이번 주": s["this_week"],
+                "지난 주": s["last_week"],
+                "변화": delta_str,
+                "_color": color,
+                "_delta": delta_int,
+            })
+        sc_df = pd.DataFrame(rows).sort_values("_delta", ascending=False)
+        display_df = sc_df[["섹터", "이번 주", "지난 주", "변화"]].reset_index(drop=True)
+
+        def _color_change(val: str) -> str:
+            v = int(val.replace("+", ""))
+            if v > 0:
+                return "color: #2E7D32; font-weight: bold"
+            if v < 0:
+                return "color: #C62828; font-weight: bold"
+            return "color: #9E9E9E"
+
+        st.dataframe(
+            display_df.style.map(_color_change, subset=["변화"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # ── Section 2: 증권사 컨센서스 TOP 5 ────────────────────────────────────
+    consensus_stocks = report.get("consensus_stocks") or []
+    if consensus_stocks:
+        st.divider()
+        st.markdown("#### 🏆 증권사 컨센서스 TOP 5")
+        st.caption("이번 주 3개 이상 증권사가 동시에 커버한 종목")
+        cs_df = pd.DataFrame(consensus_stocks).rename(columns={
+            "company":    "종목",
+            "firm_count": "커버 증권사 수",
+            "avg_upside": "평균 상승여력(%)",
+            "rating":     "투자의견",
+        })
+        st.dataframe(cs_df, use_container_width=True, hide_index=True)
+
+    # ── Section 3: 상승여력 TOP 5 + 신규 커버리지 ────────────────────────────
+    top_upside  = report.get("top_upside") or []
+    new_coverage = report.get("new_coverage") or []
+    if top_upside or new_coverage:
+        st.divider()
+        col_up, col_new = st.columns(2)
+
+        with col_up:
+            st.markdown("#### 🚀 상승여력 TOP 5")
+            if top_upside:
+                tu_df = pd.DataFrame(top_upside).rename(columns={
+                    "company":         "종목",
+                    "upside":          "상승여력(%)",
+                    "sector":          "섹터",
+                    "securities_firm": "증권사",
+                })
+                st.dataframe(tu_df, use_container_width=True, hide_index=True)
+            else:
+                st.caption("(데이터 없음)")
+
+        with col_new:
+            st.markdown("#### 🆕 신규 커버리지")
+            if new_coverage:
+                for co in new_coverage:
+                    st.markdown(
+                        f'<span style="background:#1565C0;color:#fff;padding:3px 8px;'
+                        f'border-radius:10px;font-size:12px;margin:2px;display:inline-block">'
+                        f'{co}</span>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("이번 주 신규 종목 없음")
+
+
+_MACRO_LABELS = {
+    "kospi":   ("KOSPI",    "{:,.0f}"),
+    "kosdaq":  ("KOSDAQ",   "{:,.0f}"),
+    "usd_krw": ("원달러",   "{:,.1f}"),
+    "us_10y":  ("미국채10Y", "{:.3f}%"),
+    "wti":     ("WTI",      "${:.2f}"),
+    "dxy":     ("달러인덱스", "{:.2f}"),
+}
+
+
+def _render_mi_macro(_df: pd.DataFrame) -> None:
+    st.subheader("📈 매크로 지표")
+
+    period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo"}
+    period_sel = st.radio(
+        "기간", list(period_map.keys()), horizontal=True, key="macro_period"
+    )
+    period = period_map[period_sel]
+
+    with st.spinner("시장 데이터 불러오는 중..."):
+        macro = _c_macro_data(period)
+
+    if macro.empty:
+        st.warning("매크로 데이터 수집 실패 (네트워크 확인)")
+        return
+
+    # ── Metric cards ─────────────────────────────────────────────────────────
+    cols = st.columns(6)
+    week_ago = macro.index[-1] - pd.Timedelta(days=7)
+    prev_row  = macro[macro.index <= week_ago]
+    prev_vals = prev_row.iloc[-1] if not prev_row.empty else None
+    last_row  = macro.iloc[-1]
+
+    for i, (col_key, (label, fmt)) in enumerate(_MACRO_LABELS.items()):
+        if col_key not in macro.columns:
+            continue
+        cur = float(last_row[col_key])
+        cur_str = fmt.format(cur)
+        delta_str = None
+        if prev_vals is not None and col_key in prev_vals.index:
+            prev = float(prev_vals[col_key])
+            if prev > 0:
+                pct = (cur - prev) / prev * 100
+                delta_str = f"{pct:+.2f}%"
+        cols[i].metric(label, cur_str, delta_str)
+
+    # ── Line chart ───────────────────────────────────────────────────────────
+    st.markdown("---")
+    fig = go.Figure()
+
+    for col_key in ("kospi", "kosdaq"):
+        if col_key not in macro.columns:
+            continue
+        label = _MACRO_LABELS[col_key][0]
+        fig.add_trace(go.Scatter(
+            x=macro.index, y=macro[col_key],
+            name=label, yaxis="y1",
+            mode="lines", line=dict(width=2),
+        ))
+
+    if "usd_krw" in macro.columns:
+        fig.add_trace(go.Scatter(
+            x=macro.index, y=macro["usd_krw"],
+            name="원달러", yaxis="y2",
+            mode="lines", line=dict(width=1.5, dash="dot"),
+        ))
+
+    fig.update_layout(
+        height=350,
+        margin=dict(l=0, r=0, t=30, b=0),
+        legend=dict(orientation="h", y=1.08),
+        yaxis=dict(title="지수", showgrid=True),
+        yaxis2=dict(title="원달러", overlaying="y", side="right", showgrid=False),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Signal tracker ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### 📡 과열 신호 성과 추적")
+    st.caption("기록된 🌡️과열 신호 종목의 이후 실제 수익률")
+
+    with st.spinner("신호 평가 중..."):
+        sig_df = _c_signals()
+
+    if sig_df.empty:
+        st.info("기록된 과열 신호가 없습니다. 테마 모멘텀 탭에서 과열 신호가 감지되면 자동 기록됩니다.")
+        return
+
+    col_a, col_b, col_c = st.columns(3)
+    avg_ret = round(sig_df["actual_return"].mean(), 2)
+    correct = int(sig_df["prediction_correct"].sum())
+    total   = len(sig_df)
+    col_a.metric("평균 수익률", f"{avg_ret:+.2f}%")
+    col_b.metric("적중 (하락)", f"{correct}/{total}")
+    col_c.metric("적중률", f"{correct/total*100:.1f}%" if total else "—")
+
+    display = sig_df.rename(columns={
+        "signal_date":       "신호일",
+        "theme":             "테마",
+        "company":           "종목",
+        "price_at_signal":   "신호 당시 주가",
+        "current_price":     "현재 주가",
+        "actual_return":     "수익률(%)",
+        "prediction_correct": "적중",
+    })
+
+    def _color_return(val):
+        return "color: #C62828" if val > 0 else "color: #2E7D32"
+
+    st.dataframe(
+        display.style.map(_color_return, subset=["수익률(%)"]),
+        use_container_width=True,
+        hide_index=True,
     )
 
 
@@ -1223,8 +1437,9 @@ def render_market_intelligence_tab(df: pd.DataFrame) -> None:
         st.info("분석할 데이터가 없습니다.")
         return
 
-    sub0, sub1, sub2, sub3, sub4 = st.tabs(
-        ["📰 주간 리포트", "🔥 테마 모멘텀", "🕸️ 테마 네트워크", "🏆 애널리스트", "🆕 신규 테마"]
+    sub0, sub1, sub2, sub3, sub4, sub5 = st.tabs(
+        ["📰 주간 리포트", "🔥 테마 모멘텀", "🕸️ 테마 네트워크",
+         "🏆 애널리스트", "🆕 신규 테마", "📈 매크로 지표"]
     )
     with sub0:
         _render_mi_weekly(df)
@@ -1236,3 +1451,5 @@ def render_market_intelligence_tab(df: pd.DataFrame) -> None:
         _render_mi_analyst(df)
     with sub4:
         _render_mi_new_themes(df)
+    with sub5:
+        _render_mi_macro(df)
