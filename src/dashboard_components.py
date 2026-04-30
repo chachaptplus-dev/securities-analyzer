@@ -23,11 +23,12 @@ from src.macro_analyzer import (
     detect_new_themes,
     MACRO_THEMES,
     THEME_COLORS,
+    REGIME_THEME_MAP,
     _DEFAULT_BADGE_COLOR,
 )
 from src.scoring import get_analyst_scores
 from src.market_reporter import generate_weekly_report, save_weekly_report, load_latest_report
-from src.market_data import get_macro_data
+from src.market_data import get_macro_data, classify_market_regime
 from src.signal_tracker import evaluate_past_signals
 
 
@@ -924,6 +925,11 @@ def _c_macro_data(period: str) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _c_regime(full_df: pd.DataFrame) -> dict:
+    return classify_market_regime(full_df)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _c_signals() -> pd.DataFrame:
     return evaluate_past_signals(lookback_days=30)
 
@@ -1355,6 +1361,90 @@ def _pct_span(val: float | None) -> str:
 
 _PERIOD_CHANGE_KEY = {"1mo": ("m1", "1달"), "3mo": ("m3", "3달"), "6mo": ("m6", "6달")}
 
+_REGIME_COLORS = {
+    "위험선호 (Risk-On)":     "#2E7D32",
+    "위험회피 (Risk-Off)":    "#C62828",
+    "수출주 강세":            "#1565C0",
+    "경기회복":              "#00695C",
+    "스태그플레이션 우려":    "#E65100",
+    "혼조 국면":             "#616161",
+}
+_SUB_REGIME_ICON = {
+    "금리상승": "🔴", "금리하락": "🟢", "금리안정": "🟡",
+    "달러강세/원화약세": "🟡", "달러약세/원화강세": "🟡", "환율안정": "🟢",
+    "유가상승": "🟡", "유가하락": "🟡", "유가안정": "🟢",
+    "강세장": "🟢", "약세장": "🔴", "횡보장": "🟡",
+}
+
+
+def _theme_badge(theme: str) -> str:
+    color = THEME_COLORS.get(theme, _DEFAULT_BADGE_COLOR)
+    return (
+        f'<span style="background:{color};color:#fff;padding:3px 9px;'
+        f'border-radius:10px;font-size:12px;margin:2px;display:inline-block">'
+        f'{theme}</span>'
+    )
+
+
+def _render_regime_section(regime: dict) -> None:
+    if not regime:
+        st.caption("국면 분류 데이터 없음")
+        return
+
+    overall = regime.get("overall_regime", "혼조 국면")
+    color   = _REGIME_COLORS.get(overall, "#616161")
+
+    # 1. Overall badge
+    st.markdown(
+        f'<div style="background:{color};color:#fff;border-radius:12px;'
+        f'padding:14px 20px;text-align:center;font-size:20px;font-weight:700;'
+        f'margin-bottom:16px">📊 {overall} 국면</div>',
+        unsafe_allow_html=True,
+    )
+
+    # 2. 4개 세부 국면 카드
+    sub_labels = [
+        ("금리", regime.get("rate_regime", "-")),
+        ("환율", regime.get("fx_regime", "-")),
+        ("유가", regime.get("oil_regime", "-")),
+        ("증시", regime.get("market_regime", "-")),
+    ]
+    c1, c2, c3, c4 = st.columns(4)
+    for col, (cat, val) in zip([c1, c2, c3, c4], sub_labels):
+        icon = _SUB_REGIME_ICON.get(val, "⚪")
+        col.markdown(
+            f'<div style="border:1px solid #444;border-radius:8px;padding:10px;text-align:center">'
+            f'<div style="font-size:11px;color:#9E9E9E">{cat}</div>'
+            f'<div style="font-size:15px;font-weight:600;margin-top:4px">{icon} {val}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # 3. 수혜/주의 테마
+    st.markdown("")
+    strong = regime.get("strong_themes") or []
+    weak   = regime.get("weak_themes") or []
+    if strong:
+        badges = " ".join(_theme_badge(t) for t in strong)
+        st.markdown(f'**✅ 강한 테마** &nbsp; {badges}', unsafe_allow_html=True)
+    if weak:
+        badges = " ".join(_theme_badge(t) for t in weak)
+        st.markdown(f'**⚠️ 약한 테마** &nbsp; {badges}', unsafe_allow_html=True)
+
+    # 4. 4주 변화율 요약
+    ch = regime.get("changes", {})
+    parts = []
+    if ch.get("kospi_4w") is not None:
+        parts.append(f"KOSPI {ch['kospi_4w']:+.1f}%")
+    if ch.get("usd_krw_4w") is not None:
+        parts.append(f"원달러 {ch['usd_krw_4w']:+.1f}%")
+    if ch.get("us_10y_4w") is not None:
+        parts.append(f"미국채10Y {ch['us_10y_4w']:+.3f}%p")
+    if ch.get("wti_4w") is not None:
+        parts.append(f"WTI {ch['wti_4w']:+.1f}%")
+    if parts:
+        st.caption("4주 변화: " + " | ".join(parts))
+
 
 def _render_mi_macro(_df: pd.DataFrame) -> None:
     st.subheader("📈 매크로 지표")
@@ -1427,6 +1517,13 @@ def _render_mi_macro(_df: pd.DataFrame) -> None:
         hovermode="x unified",
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── Regime section ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### 🌍 현재 시장 국면 분석")
+    full_df = macro.get("full", pd.DataFrame())
+    regime  = _c_regime(full_df) if not full_df.empty else {}
+    _render_regime_section(regime)
 
     # ── Signal tracker ───────────────────────────────────────────────────────
     st.markdown("---")

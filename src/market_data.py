@@ -132,7 +132,7 @@ def get_macro_data(period: str = "3mo") -> dict:
     chart_cutoff = last_date - pd.Timedelta(days=chart_days)
     prices = full[full.index >= chart_cutoff]
 
-    return {"prices": prices, "changes": changes}
+    return {"prices": prices, "changes": changes, "full": full}
 
 
 def get_stock_price_history(
@@ -244,4 +244,108 @@ def get_theme_performance(
         "avg_return":  avg_ret,
         "beat_count":  beat,
         "miss_count":  miss,
+    }
+
+
+def classify_market_regime(df_macro: pd.DataFrame) -> dict:
+    """
+    yfinance 가격 DataFrame 기반 시장 국면 자동 분류 (LLM 없음).
+    df_macro: get_macro_data()["full"] — 6mo unsliced price series.
+    Returns regime dict or {} if insufficient data.
+    """
+    if df_macro is None or df_macro.empty:
+        return {}
+
+    df_macro = df_macro.sort_index()
+    last_date  = df_macro.index[-1]
+    cutoff_4w  = last_date - pd.Timedelta(days=28)
+    prev_4w_df = df_macro[df_macro.index <= cutoff_4w]
+
+    if prev_4w_df.empty:
+        return {}
+
+    def _pct(col: str) -> float | None:
+        if col not in df_macro.columns:
+            return None
+        cur  = df_macro[col].dropna()
+        prev = prev_4w_df[col].dropna()
+        if cur.empty or prev.empty:
+            return None
+        c, p = float(cur.iloc[-1]), float(prev.iloc[-1])
+        return round((c - p) / p * 100, 2) if p else None
+
+    def _abs(col: str) -> float | None:
+        if col not in df_macro.columns:
+            return None
+        cur  = df_macro[col].dropna()
+        prev = prev_4w_df[col].dropna()
+        if cur.empty or prev.empty:
+            return None
+        return round(float(cur.iloc[-1]) - float(prev.iloc[-1]), 3)
+
+    kospi_4w   = _pct("kospi")
+    usd_krw_4w = _pct("usd_krw")
+    us_10y_4w  = _abs("us_10y")   # absolute change in percentage-points
+    wti_4w     = _pct("wti")
+
+    # --- sub-regime classification ---
+    if us_10y_4w is not None and us_10y_4w > 0.2:
+        rate_regime = "금리상승"
+    elif us_10y_4w is not None and us_10y_4w < -0.2:
+        rate_regime = "금리하락"
+    else:
+        rate_regime = "금리안정"
+
+    if usd_krw_4w is not None and usd_krw_4w > 2:
+        fx_regime = "달러강세/원화약세"
+    elif usd_krw_4w is not None and usd_krw_4w < -2:
+        fx_regime = "달러약세/원화강세"
+    else:
+        fx_regime = "환율안정"
+
+    if wti_4w is not None and wti_4w > 5:
+        oil_regime = "유가상승"
+    elif wti_4w is not None and wti_4w < -5:
+        oil_regime = "유가하락"
+    else:
+        oil_regime = "유가안정"
+
+    if kospi_4w is not None and kospi_4w > 3:
+        market_regime = "강세장"
+    elif kospi_4w is not None and kospi_4w < -3:
+        market_regime = "약세장"
+    else:
+        market_regime = "횡보장"
+
+    # --- overall regime (priority-ordered) ---
+    if market_regime == "강세장" and rate_regime == "금리하락":
+        overall = "위험선호 (Risk-On)"
+    elif market_regime == "약세장" and rate_regime == "금리상승":
+        overall = "위험회피 (Risk-Off)"
+    elif market_regime == "강세장" and fx_regime == "달러강세/원화약세":
+        overall = "수출주 강세"
+    elif market_regime == "강세장" and oil_regime == "유가상승":
+        overall = "경기회복"
+    elif market_regime == "약세장" and oil_regime == "유가상승":
+        overall = "스태그플레이션 우려"
+    else:
+        overall = "혼조 국면"
+
+    from src.macro_analyzer import REGIME_THEME_MAP
+    mapping = REGIME_THEME_MAP.get(overall, {})
+
+    return {
+        "rate_regime":    rate_regime,
+        "fx_regime":      fx_regime,
+        "oil_regime":     oil_regime,
+        "market_regime":  market_regime,
+        "overall_regime": overall,
+        "changes": {
+            "kospi_4w":   kospi_4w,
+            "usd_krw_4w": usd_krw_4w,
+            "us_10y_4w":  us_10y_4w,
+            "wti_4w":     wti_4w,
+        },
+        "strong_themes": mapping.get("strong", []),
+        "weak_themes":   mapping.get("weak", []),
     }

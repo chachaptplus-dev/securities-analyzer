@@ -99,8 +99,32 @@ def _build_weekly_context(df: pd.DataFrame) -> str:
     ]
     thesis_str = "\n".join(theses) if theses else "(없음)"
 
+    regime_str = ""
+    try:
+        from src.market_data import get_macro_data, classify_market_regime
+        macro = get_macro_data("3mo")
+        if macro and "full" in macro:
+            regime = classify_market_regime(macro["full"])
+            if regime:
+                ch = regime.get("changes", {})
+                regime_str = (
+                    f"[현재 시장 국면]\n"
+                    f"종합 국면: {regime.get('overall_regime', '-')}\n"
+                    f"증시: {regime.get('market_regime', '-')} | "
+                    f"금리: {regime.get('rate_regime', '-')} | "
+                    f"환율: {regime.get('fx_regime', '-')} | "
+                    f"유가: {regime.get('oil_regime', '-')}\n"
+                    f"KOSPI 4주: {ch.get('kospi_4w', 'N/A')}% | "
+                    f"원달러 4주: {ch.get('usd_krw_4w', 'N/A')}% | "
+                    f"미국채10Y 4주: {ch.get('us_10y_4w', 'N/A')}%p | "
+                    f"WTI 4주: {ch.get('wti_4w', 'N/A')}%\n\n"
+                )
+    except Exception:
+        pass
+
     return (
         f"=== 이번 주 증권사 리포트 분석 ({datetime.now().strftime('%Y-%m-%d')} 기준) ===\n\n"
+        f"{regime_str}"
         f"[섹터별 리포트 수 (상위 10)]\n"
         f"{json.dumps(sector_counts, ensure_ascii=False, indent=2)}\n\n"
         f"[주요 BUY 추천 종목]\n{buy_str}\n\n"
