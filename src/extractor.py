@@ -34,9 +34,9 @@ _COMPANY_PREFIX_RE = re.compile(
     r"Company\s*Report|Initiation|Trading\s*Update|Update)\s*",
     re.IGNORECASE,
 )
-_KO_COMPANY_PREFIX_RE = re.compile(r"^기업분석\s*")
+_KO_COMPANY_PREFIX_RE = re.compile(r"^(?:기업분석|\(잠정실적\))\s*")
 _STAR_RE = re.compile(r"[★☆]+")
-_SENTENCE_STARTERS = ("양호한", "견조한", "전망")
+_SENTENCE_STARTERS = ("양호한", "견조한", "전망", "글로벌", "Company Overview")
 
 
 def _clean_company(name: Optional[str]) -> Optional[str]:
