@@ -125,6 +125,46 @@ _DEFAULT_BADGE_COLOR = "#455A64"
 # Public API
 # ---------------------------------------------------------------------------
 
+def get_theme_trend(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Weekly theme report counts.
+    Returns a wide DataFrame: index = week-start Monday, columns = theme names, values = count.
+    Rows/columns with all-zero are dropped.
+    """
+    import pandas as pd
+
+    work = df[df["thesis"].notna() & df["report_date"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    work["report_date"] = pd.to_datetime(work["report_date"], errors="coerce")
+    ceiling = pd.Timestamp.now() + pd.Timedelta(days=30)
+    work = work[work["report_date"] <= ceiling]
+    if work.empty:
+        return pd.DataFrame()
+
+    work["week"] = work["report_date"].dt.to_period("W").dt.start_time
+
+    rows = []
+    for _, row in work.iterrows():
+        themes = extract_macro_themes(row["thesis"])
+        for t in themes:
+            rows.append({"week": row["week"], "theme": t})
+
+    if not rows:
+        return pd.DataFrame()
+
+    long = pd.DataFrame(rows)
+    counts = long.groupby(["week", "theme"]).size().reset_index(name="n")
+    pivot = (
+        counts.pivot(index="week", columns="theme", values="n")
+        .fillna(0)
+        .astype(int)
+        .sort_index()
+    )
+    return pivot
+
+
 def extract_macro_themes(thesis: str) -> list[str]:
     """
     Match thesis text against MACRO_THEMES keywords (case-insensitive).

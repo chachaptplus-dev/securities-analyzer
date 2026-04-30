@@ -30,8 +30,8 @@ _NEGATIVE_KW: frozenset[str] = frozenset({"부진", "악화", "하락", "우려"
 # ---------------------------------------------------------------------------
 
 _COMPANY_PREFIX_RE = re.compile(
-    r"^(?:Earnings\s*Preview|Issue\s+Comment|Results?\s*Comments?|"
-    r"Company\s*Report|Initiation|Update)\s*",
+    r"^(?:Earnings\s*Preview|Issue\s*(?:Comment|&\s*News)|Results?\s*Comments?|"
+    r"Company\s*Report|Initiation|Trading\s*Update|Update)\s*",
     re.IGNORECASE,
 )
 _KO_COMPANY_PREFIX_RE = re.compile(r"^기업분석\s*")

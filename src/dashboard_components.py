@@ -11,7 +11,14 @@ from src.sector_intelligence import (
     sector_cooccurrence,
     weekly_sector_counts,
 )
-from src.macro_analyzer import explain_buy_reason, THEME_COLORS, _DEFAULT_BADGE_COLOR
+from src.macro_analyzer import (
+    explain_buy_reason,
+    extract_macro_themes,
+    get_theme_trend,
+    MACRO_THEMES,
+    THEME_COLORS,
+    _DEFAULT_BADGE_COLOR,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +182,11 @@ def render_buy_stocks_tab(reports_df: pd.DataFrame, scores_df: pd.DataFrame) -> 
     # ── Sector Buy-rate bar chart ─────────────────────────────────────────────
     with col_bar:
         if "sector" in freports.columns and freports["sector"].notna().any():
+            sector_counts = freports.groupby("sector", observed=True).size()
+            active_sectors = sector_counts[sector_counts >= 5].index
             sec_buy = (
-                freports.groupby("sector", observed=True)
+                freports[freports["sector"].isin(active_sectors)]
+                .groupby("sector", observed=True)
                 .apply(lambda x: round((x["rating_normalized"] == "BUY").mean() * 100, 1))
                 .reset_index(name="buy_pct")
                 .sort_values("buy_pct", ascending=True)
@@ -197,8 +207,14 @@ def render_buy_stocks_tab(reports_df: pd.DataFrame, scores_df: pd.DataFrame) -> 
 
 
 # ---------------------------------------------------------------------------
-# Tab 4 – Thesis Clusters
+# Tab 4 – Thesis Clusters (macro theme view)
 # ---------------------------------------------------------------------------
+
+@st.cache_data(show_spinner=False)
+def _tag_themes(theses: tuple[str, ...]) -> list[list[str]]:
+    """Cached: apply extract_macro_themes to each thesis string."""
+    return [extract_macro_themes(t) for t in theses]
+
 
 def render_clusters_tab(
     df: pd.DataFrame,
@@ -206,50 +222,244 @@ def render_clusters_tab(
     cluster_names: list[str],
     cluster_terms: dict[int, list[str]],
 ) -> None:
-    st.header("투자근거 클러스터링")
+    st.header("📊 테마별 투자 동향")
 
-    if df.empty or not labels:
+    if df.empty:
         st.info("클러스터링할 데이터가 없습니다.")
         return
 
-    df_c = df.copy()
-    df_c["cluster_id"] = labels
-    df_c["cluster_name"] = [cluster_names[l] for l in labels]
+    # ── Compute theme tags ────────────────────────────────────────────────────
+    theses = tuple(df["thesis"].fillna("").tolist())
+    theme_lists = _tag_themes(theses)
 
-    counts = df_c["cluster_id"].value_counts().sort_index()
-    fig = px.bar(
-        x=[cluster_names[i] for i in counts.index],
-        y=counts.values,
-        title="클러스터별 리포트 수",
-        labels={"x": "클러스터", "y": "리포트 수"},
+    # Build a flat list of (row_index, theme) pairs
+    tagged_rows = []
+    for idx, themes in enumerate(theme_lists):
+        for t in themes:
+            tagged_rows.append({"_idx": idx, "theme": t})
+
+    if not tagged_rows:
+        st.info("투자근거 텍스트에서 매크로 테마를 찾지 못했습니다.")
+        _render_kmeans_expander(df, labels, cluster_names, cluster_terms)
+        return
+
+    df_tagged = pd.DataFrame(tagged_rows)
+
+    # ── Section 1: Theme Overview ─────────────────────────────────────────────
+    st.subheader("테마 현황")
+    theme_counts = df_tagged["theme"].value_counts().reset_index()
+    theme_counts.columns = ["theme", "count"]
+
+    bar_colors = [THEME_COLORS.get(t, _DEFAULT_BADGE_COLOR) for t in theme_counts["theme"]]
+    fig_overview = px.bar(
+        theme_counts,
+        x="count",
+        y="theme",
+        orientation="h",
+        title="매크로 테마별 리포트 수",
+        labels={"count": "리포트 수", "theme": ""},
+        text_auto=True,
+        color="theme",
+        color_discrete_map=THEME_COLORS,
     )
-    fig.update_xaxes(tickangle=-20)
-    st.plotly_chart(fig, use_container_width=True)
-
-    selected_id = st.selectbox(
-        "클러스터 선택",
-        range(len(cluster_names)),
-        format_func=lambda i: cluster_names[i],
+    fig_overview.update_layout(
+        showlegend=False,
+        coloraxis_showscale=False,
+        margin=dict(l=160),
+        yaxis=dict(categoryorder="total ascending"),
     )
+    st.plotly_chart(fig_overview, use_container_width=True)
 
-    terms = cluster_terms.get(selected_id, [])
-    if terms:
-        st.markdown("**핵심 키워드:** " + " &nbsp;|&nbsp; ".join(f"`{t}`" for t in terms))
+    # ── Section 2: Theme Deep-Dive ────────────────────────────────────────────
+    st.divider()
+    st.subheader("테마 심층 분석")
 
-    cluster_df = df_c[df_c["cluster_id"] == selected_id]
-    st.dataframe(
-        cluster_df[["company", "rating_normalized", "securities_firm", "report_date", "thesis"]].rename(
-            columns={
-                "company": "종목",
-                "rating_normalized": "투자의견",
-                "securities_firm": "증권사",
-                "report_date": "리포트일",
-                "thesis": "투자근거",
-            }
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
+    theme_options = theme_counts["theme"].tolist()
+    sel_theme = st.selectbox("테마 선택", theme_options)
+
+    if sel_theme:
+        theme_idx = df_tagged[df_tagged["theme"] == sel_theme]["_idx"].unique()
+        theme_df = df.iloc[theme_idx].copy()
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("총 리포트", len(theme_df))
+        m2.metric("종목 수", int(theme_df["company"].dropna().nunique()))
+        buy_pct = (theme_df["rating_normalized"] == "BUY").mean() * 100
+        m3.metric("BUY 비율", f"{buy_pct:.0f}%")
+        avg_up = theme_df["upside"].dropna().mean()
+        m4.metric("평균 업사이드", f"{avg_up:.1f}%" if pd.notna(avg_up) else "N/A")
+
+        # Theme description
+        desc = MACRO_THEMES.get(sel_theme, {}).get("description", "")
+        if desc:
+            st.caption(desc)
+
+        # Top 10 stocks
+        st.markdown("**상위 10 종목**")
+        top_stocks = (
+            theme_df.groupby("company", observed=True)
+            .agg(
+                reports=("id", "count"),
+                buy_count=("rating_normalized", lambda x: (x == "BUY").sum()),
+                avg_upside=("upside", "mean"),
+                latest_date=("report_date", "max"),
+            )
+            .reset_index()
+            .sort_values("reports", ascending=False)
+            .head(10)
+        )
+        top_stocks["avg_upside"] = top_stocks["avg_upside"].round(1)
+        top_stocks["buy_pct"] = (
+            top_stocks["buy_count"] / top_stocks["reports"] * 100
+        ).round(0).astype("Int64")
+        st.dataframe(
+            top_stocks.rename(columns={
+                "company": "종목", "reports": "리포트", "buy_pct": "BUY %",
+                "avg_upside": "평균 업사이드 %", "latest_date": "최근 리포트일",
+            }).drop(columns=["buy_count"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Recent 10 reports
+        st.markdown("**최근 리포트 10건**")
+        recent = (
+            theme_df.dropna(subset=["report_date"])
+            .sort_values("report_date", ascending=False)
+            .head(10)
+        )
+        st.dataframe(
+            recent[["report_date", "company", "rating_normalized", "securities_firm", "thesis"]].rename(
+                columns={
+                    "report_date": "리포트일", "company": "종목",
+                    "rating_normalized": "투자의견", "securities_firm": "증권사",
+                    "thesis": "투자근거",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Related themes co-occurrence
+        st.markdown("**함께 언급된 테마**")
+        cooc_rows = []
+        for idx in theme_idx:
+            for other_theme in theme_lists[idx]:
+                if other_theme != sel_theme:
+                    cooc_rows.append(other_theme)
+        if cooc_rows:
+            cooc_counts = pd.Series(cooc_rows).value_counts().head(8)
+            badges = []
+            for t, cnt in cooc_counts.items():
+                color = THEME_COLORS.get(t, _DEFAULT_BADGE_COLOR)
+                badges.append(
+                    f'<span style="background:{color};color:#fff;padding:2px 10px;'
+                    f'border-radius:12px;font-size:13px;margin-right:4px">'
+                    f'{t} ({cnt})</span>'
+                )
+            st.markdown("&nbsp;".join(badges), unsafe_allow_html=True)
+        else:
+            st.caption("단독 테마 — 함께 언급된 테마 없음")
+
+    # ── Section 3: Theme Trend ────────────────────────────────────────────────
+    st.divider()
+    st.subheader("테마 트렌드 (주간)")
+
+    trend = get_theme_trend(df)
+    if trend.empty or len(trend) < 2:
+        st.info("주간 트렌드를 표시할 날짜 정보가 부족합니다.")
+    else:
+        top6 = (
+            theme_counts.head(6)["theme"].tolist()
+        )
+        available_themes = [t for t in trend.columns if t in theme_counts["theme"].values]
+        default_themes = [t for t in top6 if t in available_themes]
+
+        sel_trend = st.multiselect(
+            "표시할 테마",
+            options=available_themes,
+            default=default_themes,
+            key="theme_trend_sel",
+        )
+        if sel_trend:
+            long = (
+                trend[sel_trend]
+                .reset_index()
+                .melt(id_vars="week", var_name="theme", value_name="reports")
+            )
+            long["week"] = long["week"].dt.strftime("%Y-%m-%d")
+            fig_trend = px.line(
+                long,
+                x="week",
+                y="reports",
+                color="theme",
+                color_discrete_map=THEME_COLORS,
+                markers=True,
+                title="테마별 주간 리포트 수",
+                labels={"week": "주(월요일 기준)", "reports": "리포트 수", "theme": "테마"},
+            )
+            fig_trend.update_layout(
+                xaxis_tickangle=-30,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                margin=dict(t=80),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ── KMeans expander ───────────────────────────────────────────────────────
+    _render_kmeans_expander(df, labels, cluster_names, cluster_terms)
+
+
+def _render_kmeans_expander(
+    df: pd.DataFrame,
+    labels: list[int],
+    cluster_names: list[str],
+    cluster_terms: dict[int, list[str]],
+) -> None:
+    with st.expander("🔬 고급: TF-IDF 클러스터링", expanded=False):
+        if not labels:
+            st.info("클러스터 데이터가 없습니다.")
+            return
+
+        df_c = df.copy()
+        df_c["cluster_id"] = labels
+        df_c["cluster_name"] = [cluster_names[l] for l in labels]
+
+        counts = df_c["cluster_id"].value_counts().sort_index()
+        fig = px.bar(
+            x=[cluster_names[i] for i in counts.index],
+            y=counts.values,
+            title="클러스터별 리포트 수",
+            labels={"x": "클러스터", "y": "리포트 수"},
+        )
+        fig.update_xaxes(tickangle=-20)
+        st.plotly_chart(fig, use_container_width=True)
+
+        selected_id = st.selectbox(
+            "클러스터 선택",
+            range(len(cluster_names)),
+            format_func=lambda i: cluster_names[i],
+            key="kmeans_cluster_sel",
+        )
+
+        terms = cluster_terms.get(selected_id, [])
+        if terms:
+            st.markdown("**핵심 키워드:** " + " &nbsp;|&nbsp; ".join(f"`{t}`" for t in terms))
+
+        cluster_df = df_c[df_c["cluster_id"] == selected_id]
+        st.dataframe(
+            cluster_df[["company", "rating_normalized", "securities_firm", "report_date", "thesis"]].rename(
+                columns={
+                    "company": "종목",
+                    "rating_normalized": "투자의견",
+                    "securities_firm": "증권사",
+                    "report_date": "리포트일",
+                    "thesis": "투자근거",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 # ---------------------------------------------------------------------------
