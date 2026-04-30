@@ -17,10 +17,12 @@ from src.dashboard_components import (
     render_buy_stocks_tab,
     render_clusters_tab,
     render_company_tab,
+    render_market_intelligence_tab,
     render_reports_tab,
     render_sector_trends_tab,
     render_upload_tab,
 )
+from src.macro_analyzer import detect_new_themes
 from src.database import clear_all, get_all_reports, initialize_db, insert_report
 from src.extractor import extract_report_data
 from src.pdf_parser import extract_text_from_pdf
@@ -48,6 +50,11 @@ def _apply_date_filter(df: pd.DataFrame, period: str) -> pd.DataFrame:
 
 _LOG_PATHS = [Path("data/scraper.log"), Path("logs/scraper.log")]
 _DB_PATH   = "data/securities.duckdb"
+
+
+@st.cache_data(ttl=600)
+def _get_emerging_themes(df: pd.DataFrame) -> list:
+    return detect_new_themes(df)
 
 
 @st.cache_data(ttl=300)
@@ -217,6 +224,26 @@ def main() -> None:
             else:
                 st.caption("상태: 🔴 미실행")
 
+        # Emerging themes
+        st.divider()
+        st.subheader("🆕 급부상 테마")
+        emerging = _get_emerging_themes(all_reports)
+        if not emerging:
+            st.caption("감지된 급부상 테마 없음")
+        else:
+            for t in emerging[:3]:
+                kw        = t["keywords"][0] if t["keywords"] else "?"
+                ratio_str = f"{t['surge_ratio']}×" if t["surge_ratio"] else "신규"
+                companies = ", ".join(t["sample_companies"][:2]) if t["sample_companies"] else "—"
+                color     = "#D32F2F"
+                st.markdown(
+                    f'<span style="background:{color};color:#fff;padding:2px 8px;'
+                    f'border-radius:10px;font-size:12px">{kw}</span>'
+                    f' &nbsp; **{ratio_str}**',
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"관련: {companies}")
+
         st.divider()
         if not all_reports.empty:
             if st.button("🗑 데이터 전체 초기화", type="secondary", use_container_width=True):
@@ -224,9 +251,11 @@ def main() -> None:
                 st.rerun()
 
     # ── Tabs — all receive filtered_reports ──────────────────────────────────
-    tab_upload, tab_reports, tab_buy, tab_sectors, tab_clusters, tab_company = st.tabs(
+    (tab_upload, tab_reports, tab_buy, tab_sectors,
+     tab_clusters, tab_company, tab_intel) = st.tabs(
         ["📤 PDF Upload", "📋 Extracted Reports", "📈 Buy Stocks",
-         "🌐 Sector Trends", "🔍 Thesis Clusters", "🏢 Company Detail"]
+         "🌐 Sector Trends", "🔍 Thesis Clusters", "🏢 Company Detail",
+         "📡 시장 인텔리전스"]
     )
 
     with tab_upload:
@@ -256,6 +285,9 @@ def main() -> None:
 
     with tab_company:
         render_company_tab(filtered_reports)
+
+    with tab_intel:
+        render_market_intelligence_tab(filtered_reports)
 
 
 if __name__ == "__main__":

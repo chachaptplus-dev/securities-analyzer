@@ -1,6 +1,7 @@
 """Reusable Streamlit UI components for each dashboard tab."""
 from __future__ import annotations
 
+import math
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,10 +16,15 @@ from src.macro_analyzer import (
     explain_buy_reason,
     extract_macro_themes,
     get_theme_trend,
+    get_theme_momentum,
+    get_theme_overheat,
+    get_theme_network,
+    detect_new_themes,
     MACRO_THEMES,
     THEME_COLORS,
     _DEFAULT_BADGE_COLOR,
 )
+from src.scoring import get_analyst_scores
 
 
 # ---------------------------------------------------------------------------
@@ -864,3 +870,260 @@ def render_company_tab(df: pd.DataFrame) -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Tab 7 – Market Intelligence (cached helpers + sub-tab renderers)
+# ---------------------------------------------------------------------------
+
+_TIER_COLORS = {
+    "🔥급상승": "#D32F2F",
+    "📈상승":   "#F57C00",
+    "➡️유지":   "#1976D2",
+    "📉하락":   "#9E9E9E",
+}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _c_momentum(df: pd.DataFrame) -> pd.DataFrame:
+    return get_theme_momentum(df)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _c_overheat(df: pd.DataFrame) -> pd.DataFrame:
+    return get_theme_overheat(df)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _c_network(df: pd.DataFrame) -> dict:
+    return get_theme_network(df)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _c_new_themes(df: pd.DataFrame) -> list:
+    return detect_new_themes(df)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _c_analyst_scores(df: pd.DataFrame) -> pd.DataFrame:
+    return get_analyst_scores(df)
+
+
+def _build_network_figure(network: dict) -> go.Figure:
+    nodes = network["nodes"]
+    edges = network["edges"]
+    if not nodes:
+        return go.Figure()
+
+    n      = len(nodes)
+    angles = [2 * math.pi * i / n for i in range(n)]
+    pos    = {nd["id"]: (math.cos(a), math.sin(a)) for nd, a in zip(nodes, angles)}
+
+    fig = go.Figure()
+    for edge in edges:
+        x0, y0 = pos.get(edge["source"], (0, 0))
+        x1, y1 = pos.get(edge["target"], (0, 0))
+        fig.add_trace(go.Scatter(
+            x=[x0, x1, None], y=[y0, y1, None],
+            mode="lines",
+            line=dict(width=max(1, edge["weight"] // 3), color="rgba(160,160,160,0.45)"),
+            hoverinfo="none", showlegend=False,
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=[pos[nd["id"]][0] for nd in nodes],
+        y=[pos[nd["id"]][1] for nd in nodes],
+        mode="markers+text",
+        text=[nd["id"] for nd in nodes],
+        textposition="top center",
+        textfont=dict(size=11),
+        marker=dict(
+            size=[max(20, min(60, nd["count"] * 3)) for nd in nodes],
+            color=[_TIER_COLORS.get(nd.get("tier", "➡️유지"), "#1976D2") for nd in nodes],
+            line=dict(width=2, color="white"),
+        ),
+        hovertext=[
+            f"{nd['id']}<br>리포트: {nd['count']}<br>{nd.get('tier', '')}"
+            for nd in nodes
+        ],
+        hoverinfo="text",
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        title="테마 연관관계 네트워크",
+        height=520,
+        margin=dict(l=20, r=20, t=50, b=20),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.6, 1.6]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.6, 1.6]),
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
+def _render_mi_momentum(df: pd.DataFrame) -> None:
+    momentum = _c_momentum(df)
+    overheat = _c_overheat(df)
+
+    if momentum.empty:
+        st.info("모멘텀 분석에 필요한 날짜 데이터가 부족합니다.")
+        return
+
+    # Total theme counts for bubble size
+    theses_tuple = tuple(df["thesis"].fillna("").tolist())
+    theme_lists  = _tag_themes(theses_tuple)
+    flat         = [t for tl in theme_lists for t in tl]
+    total_counts = pd.Series(flat).value_counts().reset_index()
+    total_counts.columns = ["theme", "total"]
+
+    bubble = momentum.merge(total_counts, on="theme", how="left")
+    bubble["total"]             = bubble["total"].fillna(1)
+    bubble["momentum_display"]  = bubble["momentum_score"].fillna(5.0)
+
+    fig_bub = px.scatter(
+        bubble,
+        x="recent", y="momentum_display",
+        size="total", color="tier",
+        color_discrete_map=_TIER_COLORS,
+        hover_name="theme",
+        hover_data={"recent": True, "prev": True, "total": True,
+                    "momentum_display": False},
+        size_max=60,
+        title="테마 모멘텀 버블차트  (x: 최근 2주 언급수 · y: 모멘텀 배율)",
+        labels={
+            "recent": "최근 2주 언급 수",
+            "momentum_display": "모멘텀 (×배)",
+            "tier": "구분", "total": "전체 리포트",
+        },
+    )
+    fig_bub.add_hline(y=1.0, line_dash="dash", line_color="gray",
+                      annotation_text="기준선 (1×)", annotation_position="bottom right")
+    st.plotly_chart(fig_bub, use_container_width=True)
+
+    col_m, col_h = st.columns(2)
+    with col_m:
+        st.subheader("모멘텀 순위")
+        st.dataframe(
+            momentum.rename(columns={
+                "theme": "테마", "tier": "구분",
+                "recent": "최근 2주", "prev": "이전 2주",
+                "momentum_score": "모멘텀(×)",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+    with col_h:
+        st.subheader("과열도")
+        if overheat.empty:
+            st.info("주간 데이터가 부족합니다.")
+        else:
+            st.dataframe(
+                overheat.rename(columns={
+                    "theme": "테마", "overheat": "과열도",
+                    "avg_weekly": "주평균", "current_week": "이번주",
+                    "z_score": "Z-score",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+
+
+def _render_mi_network(df: pd.DataFrame) -> None:
+    network = _c_network(df)
+    if not network["nodes"]:
+        st.info("네트워크 분석에 필요한 데이터가 부족합니다.")
+        return
+
+    st.plotly_chart(_build_network_figure(network), use_container_width=True)
+
+    st.subheader("연관 테마 TOP 5")
+    if network["edges"]:
+        edges_df = (
+            pd.DataFrame(network["edges"])
+            .sort_values("weight", ascending=False)
+            .head(5)
+            .rename(columns={"source": "테마 A", "target": "테마 B", "weight": "공동 출현"})
+        )
+        st.dataframe(edges_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("공동 출현 2회 이상인 테마 쌍 없음")
+
+
+def _render_mi_analyst(df: pd.DataFrame) -> None:
+    all_sectors = sorted(df["sector"].dropna().unique().tolist()) if not df.empty else []
+    sel = st.selectbox("섹터 필터", ["전체"] + all_sectors, key="mi_analyst_sector")
+    work = df[df["sector"] == sel].copy() if sel != "전체" else df.copy()
+
+    analyst_df = _c_analyst_scores(work)
+    if analyst_df.empty:
+        st.info("애널리스트 데이터가 없습니다 (애널리스트명 + 최소 2건 필요).")
+        return
+
+    st.subheader("애널리스트 신뢰도 TOP 20")
+    st.dataframe(
+        analyst_df.head(20).rename(columns={
+            "analyst": "애널리스트", "firm": "증권사",
+            "coverage": "커버 종목", "consistency": "반복커버(%)",
+            "bullish_ratio": "Buy비율(%)", "avg_upside": "평균업사이드(%)",
+            "reliability_score": "신뢰도점수",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+
+    firm_agg = (
+        analyst_df.groupby("firm")["reliability_score"]
+        .mean().reset_index()
+        .sort_values("reliability_score", ascending=True)
+        .tail(10)
+    )
+    fig_f = px.bar(
+        firm_agg, x="reliability_score", y="firm",
+        orientation="h", color="reliability_score",
+        color_continuous_scale="Blues",
+        title="증권사별 평균 애널리스트 신뢰도 (상위 10)",
+        labels={"reliability_score": "평균 신뢰도", "firm": ""},
+        text_auto=".1f",
+    )
+    fig_f.update_layout(coloraxis_showscale=False, margin=dict(l=160))
+    st.plotly_chart(fig_f, use_container_width=True)
+
+
+def _render_mi_new_themes(df: pd.DataFrame) -> None:
+    new_themes = _c_new_themes(df)
+    if not new_themes:
+        st.success("최근 7일간 급부상 테마 감지 없음 (기준: 5× 이상 + 3건 이상)")
+        return
+
+    st.caption("최근 7일 기준 · 이전 30일 대비 5× 이상 급증 · 3건 이상 언급")
+    cols = st.columns(2)
+    for i, t in enumerate(new_themes):
+        kw        = t["keywords"][0] if t["keywords"] else "?"
+        ratio_str = f"{t['surge_ratio']}×" if t["surge_ratio"] else "신규 등장"
+        companies = ", ".join(t["sample_companies"]) if t["sample_companies"] else "—"
+        first     = t["first_seen"] or "—"
+        with cols[i % 2]:
+            with st.container(border=True):
+                st.markdown(f"**{kw}**")
+                c1, c2 = st.columns(2)
+                c1.metric("급증 배율", ratio_str)
+                c2.metric("언급 건수", t["count"])
+                st.caption(f"첫 등장: {first}")
+                st.caption(f"관련 종목: {companies}")
+
+
+def render_market_intelligence_tab(df: pd.DataFrame) -> None:
+    st.header("📡 시장 인텔리전스")
+
+    if df.empty or "thesis" not in df.columns:
+        st.info("분석할 데이터가 없습니다.")
+        return
+
+    sub1, sub2, sub3, sub4 = st.tabs(
+        ["🔥 테마 모멘텀", "🕸️ 테마 네트워크", "🏆 애널리스트", "🆕 신규 테마"]
+    )
+    with sub1:
+        _render_mi_momentum(df)
+    with sub2:
+        _render_mi_network(df)
+    with sub3:
+        _render_mi_analyst(df)
+    with sub4:
+        _render_mi_new_themes(df)

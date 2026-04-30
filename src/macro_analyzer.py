@@ -165,6 +165,226 @@ def get_theme_trend(df: "pd.DataFrame") -> "pd.DataFrame":
     return pivot
 
 
+def get_theme_momentum(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    테마별 모멘텀 점수.
+    최근 2주 언급 수 / 이전 2주 언급 수 비율.
+    Returns: theme | recent | prev | momentum_score | tier
+    tier: 🔥급상승(>3×) | 📈상승(>1.5×) | ➡️유지 | 📉하락(<0.7×)
+    """
+    import pandas as pd
+
+    work = df[df["thesis"].notna() & df["report_date"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    work["report_date"] = pd.to_datetime(work["report_date"], errors="coerce")
+    ceiling = pd.Timestamp.now() + pd.Timedelta(days=30)
+    work = work[work["report_date"] <= ceiling]
+    if work.empty:
+        return pd.DataFrame()
+
+    max_date  = work["report_date"].max()
+    cut_mid   = max_date - pd.Timedelta(days=14)
+    cut_start = max_date - pd.Timedelta(days=28)
+
+    recent_rows = work[work["report_date"] > cut_mid]
+    prev_rows   = work[(work["report_date"] > cut_start) & (work["report_date"] <= cut_mid)]
+
+    def _count(rows: "pd.DataFrame") -> dict:
+        counts: dict = {}
+        for t in rows["thesis"]:
+            for theme in extract_macro_themes(t):
+                counts[theme] = counts.get(theme, 0) + 1
+        return counts
+
+    recent_c = _count(recent_rows)
+    prev_c   = _count(prev_rows)
+
+    rows_out = []
+    for theme in set(recent_c) | set(prev_c):
+        r = recent_c.get(theme, 0)
+        p = prev_c.get(theme, 0)
+        momentum = (r / p) if p > 0 else float("inf")
+        if momentum == float("inf") or momentum > 3:
+            tier = "🔥급상승"
+        elif momentum > 1.5:
+            tier = "📈상승"
+        elif momentum < 0.7:
+            tier = "📉하락"
+        else:
+            tier = "➡️유지"
+        rows_out.append({
+            "theme": theme, "recent": r, "prev": p,
+            "momentum_score": round(momentum, 2) if momentum != float("inf") else None,
+            "tier": tier,
+        })
+
+    result = pd.DataFrame(rows_out)
+    if result.empty:
+        return result
+    return result.sort_values("recent", ascending=False).reset_index(drop=True)
+
+
+def get_theme_overheat(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    테마 과열도 점수.
+    최근 4주 평균 대비 현재 주 z-score.
+    Returns: theme | avg_weekly | current_week | z_score | overheat
+    overheat: 🌡️과열(z>2) | ⚠️주의(z>1) | ✅정상
+    """
+    import pandas as pd
+
+    trend = get_theme_trend(df)
+    if trend.empty or len(trend) < 2:
+        return pd.DataFrame()
+
+    rows_out = []
+    for theme in trend.columns:
+        series = trend[theme].astype(float)
+        if series.sum() == 0:
+            continue
+        current = float(series.iloc[-1])
+        history = series.iloc[:-1].tail(4)
+        avg     = float(history.mean())
+        std     = float(history.std(ddof=0))
+        z       = (current - avg) / std if std > 0 else 0.0
+        if z > 2:
+            overheat = "🌡️과열"
+        elif z > 1:
+            overheat = "⚠️주의"
+        else:
+            overheat = "✅정상"
+        rows_out.append({
+            "theme": theme, "avg_weekly": round(avg, 1),
+            "current_week": int(current), "z_score": round(z, 2),
+            "overheat": overheat,
+        })
+
+    result = pd.DataFrame(rows_out)
+    if result.empty:
+        return result
+    return result.sort_values("z_score", ascending=False).reset_index(drop=True)
+
+
+def get_theme_network(df: "pd.DataFrame") -> dict:
+    """
+    테마 간 연관관계 네트워크.
+    같은 thesis에서 함께 등장하는 테마 쌍 집계.
+    Returns: {"nodes": [...], "edges": [...]}
+    nodes: {id, count, momentum_score, tier}
+    edges: {source, target, weight}
+    """
+    from collections import defaultdict
+
+    work = df[df["thesis"].notna()].copy()
+    if work.empty:
+        return {"nodes": [], "edges": []}
+
+    theme_counts: dict = defaultdict(int)
+    pair_counts:  dict = defaultdict(int)
+    for thesis in work["thesis"]:
+        themes = extract_macro_themes(thesis or "")
+        for t in themes:
+            theme_counts[t] += 1
+        for i, t1 in enumerate(themes):
+            for t2 in themes[i + 1:]:
+                pair_counts[tuple(sorted([t1, t2]))] += 1
+
+    momentum_df = get_theme_momentum(df)
+    m_score: dict = {}
+    m_tier:  dict = {}
+    if not momentum_df.empty:
+        for _, row in momentum_df.iterrows():
+            m_score[row["theme"]] = row["momentum_score"]
+            m_tier[row["theme"]]  = row["tier"]
+
+    nodes = [
+        {"id": t, "count": cnt,
+         "momentum_score": m_score.get(t), "tier": m_tier.get(t, "➡️유지")}
+        for t, cnt in theme_counts.items()
+    ]
+    edges = [
+        {"source": pair[0], "target": pair[1], "weight": w}
+        for pair, w in pair_counts.items() if w >= 2
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+def detect_new_themes(df: "pd.DataFrame", lookback_days: int = 7) -> list:
+    """
+    신규 테마 감지.
+    최근 lookback_days일 키워드 빈도 vs 이전 30일 비교.
+    5× 이상 증가 + 3건 이상인 키워드.
+    Returns: [{keywords, count, sample_companies, first_seen, surge_ratio}]
+    """
+    import pandas as pd
+
+    work = df[df["thesis"].notna() & df["report_date"].notna()].copy()
+    if work.empty:
+        return []
+
+    work["report_date"] = pd.to_datetime(work["report_date"], errors="coerce")
+    ceiling = pd.Timestamp.now() + pd.Timedelta(days=30)
+    work = work[work["report_date"] <= ceiling]
+    if work.empty:
+        return []
+
+    max_date    = work["report_date"].max()
+    cut_recent  = max_date - pd.Timedelta(days=lookback_days)
+    cut_start   = max_date - pd.Timedelta(days=lookback_days + 30)
+
+    recent_rows = work[work["report_date"] > cut_recent]
+    prev_rows   = work[(work["report_date"] > cut_start) & (work["report_date"] <= cut_recent)]
+
+    def _kw_counts(rows: "pd.DataFrame") -> dict:
+        counts: dict = {}
+        for _, row in rows.iterrows():
+            text_lower = (row["thesis"] or "").lower()
+            for meta in MACRO_THEMES.values():
+                for kw in meta["keywords"]:
+                    if kw.lower() in text_lower:
+                        counts[kw] = counts.get(kw, 0) + 1
+        return counts
+
+    recent_kw = _kw_counts(recent_rows)
+    prev_kw   = _kw_counts(prev_rows)
+
+    results = []
+    seen: set = set()
+    for kw, count in sorted(recent_kw.items(), key=lambda x: -x[1]):
+        if kw in seen or count < 3:
+            continue
+        prev_count  = prev_kw.get(kw, 0)
+        surge_ratio = (count / prev_count) if prev_count > 0 else float("inf")
+        if surge_ratio != float("inf") and surge_ratio < 5:
+            continue
+
+        sample_companies: list = []
+        first_seen = None
+        for _, row in recent_rows.iterrows():
+            if kw.lower() in (row["thesis"] or "").lower():
+                co = row.get("company")
+                if co and co not in sample_companies:
+                    sample_companies.append(co)
+                dt = row["report_date"]
+                if first_seen is None or dt < first_seen:
+                    first_seen = dt
+
+        results.append({
+            "keywords":         [kw],
+            "count":            count,
+            "sample_companies": sample_companies[:5],
+            "first_seen":       str(first_seen)[:10] if first_seen is not None else None,
+            "surge_ratio":      round(surge_ratio, 1) if surge_ratio != float("inf") else None,
+        })
+        seen.add(kw)
+        if len(results) >= 10:
+            break
+
+    return results
+
+
 def extract_macro_themes(thesis: str) -> list[str]:
     """
     Match thesis text against MACRO_THEMES keywords (case-insensitive).
