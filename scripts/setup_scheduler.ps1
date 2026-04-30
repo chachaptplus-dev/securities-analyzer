@@ -23,7 +23,8 @@ function Register-AnalyzerTask {
         -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
         -RestartCount 1 `
         -RestartInterval (New-TimeSpan -Minutes 10) `
-        -StartWhenAvailable
+        -StartWhenAvailable `
+        -RunOnlyIfNetworkAvailable
 
     Register-ScheduledTask `
         -TaskName    $TaskName `
@@ -59,8 +60,8 @@ Register-AnalyzerTask `
 Register-AnalyzerTask `
     -TaskName   "SecuritiesAnalyzer-WeeklyReport" `
     -TaskArg    "weekly" `
-    -Trigger    (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At "08:00") `
-    -Description "Monday pre-generation of weekly market report"
+    -Trigger    (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Saturday -At "15:00") `
+    -Description "Saturday pre-generation of weekly market report"
 
 # Task 4: Stock master update — 1st of every month at 07:00
 try {

@@ -52,8 +52,8 @@ def save_weekly_report(report: dict) -> None:
     )
 
 
-def load_latest_report(force: bool = False) -> dict | None:
-    """Return the most recent saved report if within 24h, else None.
+def load_latest_report(force: bool = False, max_age_days: int = 1) -> dict | None:
+    """Return the most recent saved report if within max_age_days, else None.
     If force=True, skip the file entirely (used by force-regenerate button).
     """
     if force:
@@ -69,11 +69,16 @@ def load_latest_report(force: bool = False) -> dict | None:
         if not generated_at:
             return None
         dt = datetime.strptime(generated_at, "%Y-%m-%d %H:%M")
-        if datetime.now() - dt <= timedelta(hours=24):
+        if datetime.now() - dt <= timedelta(days=max_age_days):
             return latest
         return None
     except Exception:
         return None
+
+
+def should_regenerate(max_age_days: int = 7) -> bool:
+    """Return True if no saved report exists within max_age_days."""
+    return load_latest_report(force=False, max_age_days=max_age_days) is None
 
 
 def _build_weekly_context(df: pd.DataFrame) -> str:

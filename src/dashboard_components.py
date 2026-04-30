@@ -27,7 +27,7 @@ from src.macro_analyzer import (
     _DEFAULT_BADGE_COLOR,
 )
 from src.scoring import get_analyst_scores
-from src.market_reporter import generate_weekly_report, save_weekly_report, load_latest_report
+from src.market_reporter import generate_weekly_report, save_weekly_report, load_latest_report, should_regenerate
 from src.market_data import get_macro_data, classify_market_regime
 from src.signal_tracker import evaluate_past_signals
 
@@ -1164,6 +1164,11 @@ def _render_mi_weekly(df: pd.DataFrame) -> None:
                 )
             except Exception:
                 st.session_state["weekly_report_time"] = None
+        elif should_regenerate(max_age_days=7):
+            with st.spinner("주간 리포트 자동 생성 중..."):
+                _run_weekly_report(df)
+            st.session_state["weekly_report_auto"] = True
+            st.rerun()
 
     report = st.session_state.get("weekly_report")
     report_time: datetime | None = st.session_state.get("weekly_report_time")
@@ -1178,6 +1183,8 @@ def _render_mi_weekly(df: pd.DataFrame) -> None:
             st.rerun()
         st.caption("생성 비용 ≈ $0.007 (약 10원)")
     else:
+        if st.session_state.pop("weekly_report_auto", False):
+            st.info("자동 생성됨")
         ts = report_time.strftime("%Y-%m-%d %H:%M") if report_time else ""
         st.success(f"✅ 오늘 리포트가 이미 생성되었습니다")
         if ts:
