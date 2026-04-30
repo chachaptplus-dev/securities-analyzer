@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -40,6 +41,7 @@ UPLOAD_DIR = Path("data/uploads")
 MODEL = "claude-haiku-4-5-20251001"
 MAX_TEXT_CHARS = 2000   # header chars sent to LLM
 RATE_LIMIT_SLEEP = 0.5  # seconds between API calls
+_LAST_RUN_PATH = Path("data/last_reparse.json")
 
 
 _SYSTEM = """\
@@ -98,27 +100,50 @@ def _call_llm(client: anthropic.Anthropic, text: str) -> dict:
     return json.loads(raw)
 
 
-def _get_target_rows(con: duckdb.DuckDBPyConnection) -> list[tuple]:
+def load_last_run() -> str | None:
+    """Return ISO timestamp string of last successful run, or None."""
+    if not _LAST_RUN_PATH.exists():
+        return None
+    try:
+        return json.loads(_LAST_RUN_PATH.read_text(encoding="utf-8")).get("last_run")
+    except Exception:
+        return None
+
+
+def save_last_run(rows_processed: int, rows_updated: int) -> None:
+    data = {
+        "last_run":       datetime.now().isoformat(timespec="seconds"),
+        "rows_processed": rows_processed,
+        "rows_updated":   rows_updated,
+    }
+    _LAST_RUN_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _get_target_rows(con: duckdb.DuckDBPyConnection, since: str | None = None) -> list[tuple]:
     """
     Returns rows where we need LLM help:
       - rating_normalized = 'UNKNOWN'  OR  company IS NULL
+      - optionally filtered to uploaded_at > since (ISO timestamp)
     Prioritises rows that have at least some thesis text.
     """
-    return con.execute("""
+    extra = "AND uploaded_at > ?" if since else ""
+    params = [since] if since else []
+    return con.execute(f"""
         SELECT id, filename, company, rating_normalized, target_price, current_price, thesis
         FROM reports
-        WHERE rating_normalized = 'UNKNOWN' OR company IS NULL
+        WHERE (rating_normalized = 'UNKNOWN' OR company IS NULL)
+        {extra}
         ORDER BY
             CASE WHEN thesis IS NOT NULL AND length(thesis) > 10 THEN 0 ELSE 1 END,
             id
-    """).fetchall()
+    """, params).fetchall()
 
 
-def run(dry_run: bool, limit: int | None) -> None:
+def run(dry_run: bool, limit: int | None, since: str | None = None) -> None:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     client = anthropic.Anthropic(api_key=api_key) if not dry_run else None
     con = duckdb.connect(DB_PATH, read_only=True)
-    rows = _get_target_rows(con)
+    rows = _get_target_rows(con, since=since)
     con.close()
 
     if limit:
@@ -215,16 +240,26 @@ def run(dry_run: bool, limit: int | None) -> None:
     print(f"Errors           : {stats['error']}")
     print(f"Total processed  : {len(rows)}")
 
+    if not dry_run:
+        save_last_run(rows_processed=len(rows), rows_updated=stats["updated"])
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=None,
                         help="Process at most N rows (for testing)")
+    parser.add_argument("--since", default=None,
+                        help="ISO timestamp — only process rows uploaded after this time "
+                             "(e.g. 2026-04-30T09:00:00). Defaults to last_run from "
+                             "data/last_reparse.json if omitted.")
     args = parser.parse_args()
 
     if not args.dry_run and not os.environ.get("ANTHROPIC_API_KEY"):
         print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
-    run(dry_run=args.dry_run, limit=args.limit)
+    # If --since not provided, fall back to saved last_run
+    since_ts = args.since or (load_last_run() if not args.dry_run else None)
+
+    run(dry_run=args.dry_run, limit=args.limit, since=since_ts)
