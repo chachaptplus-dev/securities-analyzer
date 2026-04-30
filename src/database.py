@@ -22,11 +22,14 @@ _DDL_STATEMENTS = [
         analyst       VARCHAR,
         report_date   DATE,
         thesis        TEXT,
+        sector        VARCHAR,
         page_count    INTEGER,
         uploaded_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
     "CREATE SEQUENCE IF NOT EXISTS reports_id_seq START 1",
+    # Migration: add sector column to existing tables created before this version
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS sector VARCHAR",
 ]
 
 
@@ -56,11 +59,11 @@ def insert_report(report: dict) -> Optional[int]:
         INSERT INTO reports (
             id, filename, company, rating_raw, rating_normalized,
             target_price, current_price, upside,
-            securities_firm, analyst, report_date, thesis, page_count
+            securities_firm, analyst, report_date, thesis, sector, page_count
         ) VALUES (
             nextval('reports_id_seq'), ?, ?, ?, ?,
             ?, ?, ?,
-            ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?
         ) RETURNING id
         """,
         [
@@ -75,6 +78,7 @@ def insert_report(report: dict) -> Optional[int]:
             report.get("analyst"),
             report.get("report_date"),
             report.get("thesis"),
+            report.get("sector"),
             report.get("page_count"),
         ],
     ).fetchone()
@@ -103,3 +107,47 @@ def clear_all() -> None:
     con = _con()
     con.execute("DELETE FROM reports")
     con.close()
+
+
+def backfill_sectors() -> tuple[int, int]:
+    """
+    Two-pass sector backfill.
+
+    Pass 1 — company-map override: update ALL rows whose company name matches
+              the authoritative COMPANY_SECTOR dict (fixes wrong keyword tags too).
+    Pass 2 — keyword fill: update remaining NULL rows via thesis keyword scan.
+
+    Returns (pass1_count, pass2_count).
+    """
+    from src.sector import infer_sector, COMPANY_SECTOR, _norm
+
+    con = _con()
+    all_rows = con.execute("SELECT id, company, thesis, sector FROM reports").fetchall()
+
+    pass1 = pass2 = 0
+
+    for row_id, company, thesis, current_sector in all_rows:
+        company_norm = _norm(company or "")
+
+        # Pass 1: authoritative company-map lookup
+        mapped = None
+        for key, sector in COMPANY_SECTOR.items():
+            key_n = _norm(key)
+            if key_n == company_norm or (len(key_n) >= 3 and key_n in company_norm):
+                mapped = sector
+                break
+
+        if mapped and mapped != current_sector:
+            con.execute("UPDATE reports SET sector = ? WHERE id = ?", [mapped, row_id])
+            pass1 += 1
+            continue
+
+        # Pass 2: keyword fill for still-NULL rows
+        if current_sector is None and not mapped:
+            kw_sector = infer_sector(thesis or "", company or "")
+            if kw_sector:
+                con.execute("UPDATE reports SET sector = ? WHERE id = ?", [kw_sector, row_id])
+                pass2 += 1
+
+    con.close()
+    return pass1, pass2

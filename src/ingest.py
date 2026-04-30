@@ -14,6 +14,7 @@ from src.database import initialize_db, insert_report
 from src.extractor import extract_report_data
 from src.pdf_parser import extract_text_from_pdf
 from src.rating_normalizer import normalize_rating
+from src.sector import infer_sector
 
 UPLOAD_DIR = Path("data/uploads")
 DB_PATH = Path("data/securities.duckdb")
@@ -37,6 +38,7 @@ def _process(pdf_path: Path) -> bool:
         cp = report.get("current_price")
         report["upside"] = round((tp - cp) / cp * 100, 1) if (tp and cp and cp > 0) else None
         report["report_date"] = report.pop("date", None)
+        report["sector"] = infer_sector(report.get("thesis") or "", report.get("company") or "")
         insert_report(report)
         return True
     except Exception as exc:

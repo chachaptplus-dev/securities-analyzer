@@ -15,6 +15,7 @@ from src.dashboard_components import (
     render_clusters_tab,
     render_company_tab,
     render_reports_tab,
+    render_sector_trends_tab,
     render_upload_tab,
 )
 from src.database import clear_all, get_all_reports, initialize_db, insert_report
@@ -22,6 +23,7 @@ from src.extractor import extract_report_data
 from src.pdf_parser import extract_text_from_pdf
 from src.rating_normalizer import normalize_rating
 from src.scoring import calculate_buy_signal_score
+from src.sector import infer_sector
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -61,6 +63,9 @@ def _process_files(uploaded_files: list) -> None:
             report["upside"] = round((tp - cp) / cp * 100, 1) if (tp and cp and cp > 0) else None
 
             report["report_date"] = report.pop("date", None)
+            report["sector"] = infer_sector(
+                report.get("thesis") or "", report.get("company") or ""
+            )
 
             insert_report(report)
             success += 1
@@ -103,8 +108,9 @@ def main() -> None:
                 clear_all()
                 st.rerun()
 
-    tab_upload, tab_reports, tab_buy, tab_clusters, tab_company = st.tabs(
-        ["📤 PDF Upload", "📋 Extracted Reports", "📈 Buy Stocks", "🔍 Thesis Clusters", "🏢 Company Detail"]
+    tab_upload, tab_reports, tab_buy, tab_sectors, tab_clusters, tab_company = st.tabs(
+        ["📤 PDF Upload", "📋 Extracted Reports", "📈 Buy Stocks",
+         "🌐 Sector Trends", "🔍 Thesis Clusters", "🏢 Company Detail"]
     )
 
     with tab_upload:
@@ -116,6 +122,9 @@ def main() -> None:
     with tab_buy:
         scores = calculate_buy_signal_score(all_reports) if not all_reports.empty else pd.DataFrame()
         render_buy_stocks_tab(all_reports, scores)
+
+    with tab_sectors:
+        render_sector_trends_tab(all_reports)
 
     with tab_clusters:
         theses_col = all_reports["thesis"] if not all_reports.empty else pd.Series([], dtype=str)

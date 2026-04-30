@@ -195,7 +195,153 @@ def render_clusters_tab(
 
 
 # ---------------------------------------------------------------------------
-# Tab 5 – Company Detail
+# Tab 5 – Sector Trends
+# ---------------------------------------------------------------------------
+
+def render_sector_trends_tab(df: pd.DataFrame) -> None:
+    st.header("Sector Trends")
+
+    if df.empty or "sector" not in df.columns:
+        st.info("No sector data available.")
+        return
+
+    tagged = df[df["sector"].notna()].copy()
+    if tagged.empty:
+        st.info("No reports have been tagged with a sector yet.")
+        return
+
+    # ── Sector-level summary ─────────────────────────────────────────────────
+    sector_stats = (
+        tagged.groupby("sector")
+        .agg(
+            reports=("id", "count"),
+            stocks=("company", "nunique"),
+            avg_upside=("upside", "mean"),
+        )
+        .reset_index()
+        .sort_values("reports", ascending=False)
+    )
+    sector_stats["avg_upside"] = sector_stats["avg_upside"].round(1)
+
+    st.caption(
+        f"{len(tagged):,} tagged reports · {sector_stats['stocks'].sum():,} stocks · "
+        f"{len(sector_stats)} sectors"
+    )
+
+    # ── Chart row ────────────────────────────────────────────────────────────
+    col_vol, col_up = st.columns(2)
+
+    with col_vol:
+        fig_vol = px.bar(
+            sector_stats,
+            x="sector",
+            y="reports",
+            color="reports",
+            color_continuous_scale="Blues",
+            title="Report Volume by Sector",
+            labels={"sector": "", "reports": "Reports"},
+            text_auto=True,
+        )
+        fig_vol.update_layout(
+            coloraxis_showscale=False,
+            xaxis_tickangle=-35,
+            margin=dict(b=120),
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
+    with col_up:
+        upside_sorted = (
+            sector_stats.dropna(subset=["avg_upside"])
+            .sort_values("avg_upside", ascending=True)
+        )
+        fig_up = px.bar(
+            upside_sorted,
+            x="avg_upside",
+            y="sector",
+            orientation="h",
+            color="avg_upside",
+            color_continuous_scale="RdYlGn",
+            title="Avg Analyst Upside by Sector (%)",
+            labels={"avg_upside": "Avg Upside (%)", "sector": ""},
+            text_auto=".1f",
+        )
+        fig_up.update_layout(coloraxis_showscale=False, margin=dict(l=160))
+        st.plotly_chart(fig_up, use_container_width=True)
+
+    # ── Sector deep-dive ─────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Sector Deep-Dive")
+
+    sector_list = sector_stats.sort_values("reports", ascending=False)["sector"].tolist()
+    selected_sector = st.selectbox("Select a sector", sector_list)
+
+    sdf = tagged[tagged["sector"] == selected_sector].copy()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Reports", len(sdf))
+    m2.metric("Stocks", int(sdf["company"].nunique()))
+    avg_up = sdf["upside"].dropna().mean()
+    m3.metric("Avg Upside", f"{avg_up:.1f}%" if pd.notna(avg_up) else "N/A")
+    buy_pct = (sdf["rating_normalized"] == "BUY").mean() * 100
+    m4.metric("BUY Rate", f"{buy_pct:.0f}%")
+
+    # Top stocks table
+    st.markdown("**Top Stocks**")
+    stock_stats = (
+        sdf.groupby("company")
+        .agg(
+            reports=("id", "count"),
+            avg_upside=("upside", "mean"),
+            buy_count=("rating_normalized", lambda x: (x == "BUY").sum()),
+            latest_date=("report_date", "max"),
+            latest_rating=("rating_normalized", "last"),
+        )
+        .reset_index()
+        .sort_values("avg_upside", ascending=False)
+    )
+    stock_stats["avg_upside"] = stock_stats["avg_upside"].round(1)
+    stock_stats["buy_pct"] = (stock_stats["buy_count"] / stock_stats["reports"] * 100).round(0).astype("Int64")
+
+    st.dataframe(
+        stock_stats.rename(columns={
+            "company":      "Company",
+            "reports":      "Reports",
+            "avg_upside":   "Avg Upside %",
+            "buy_pct":      "BUY %",
+            "latest_date":  "Latest Report",
+            "latest_rating":"Latest Rating",
+        }).drop(columns=["buy_count"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # BUY thesis snippets for top stocks
+    st.markdown("**Recent BUY Theses**")
+    buy_rows = (
+        sdf[sdf["rating_normalized"] == "BUY"]
+        .dropna(subset=["thesis"])
+        .sort_values("report_date", ascending=False)
+        .drop_duplicates(subset=["company"])
+        .head(8)
+    )
+
+    if buy_rows.empty:
+        st.caption("No BUY-rated reports with thesis text in this sector.")
+    else:
+        for _, row in buy_rows.iterrows():
+            company = row.get("company") or "Unknown"
+            date    = str(row.get("report_date") or "")[:10]
+            firm    = row.get("securities_firm") or ""
+            upside  = row.get("upside")
+            thesis  = (row.get("thesis") or "").strip()[:400]
+            up_str  = f"  ·  upside {upside:.1f}%" if pd.notna(upside) else ""
+            label   = f"{company}  ·  {date}  ·  {firm}{up_str}"
+            with st.expander(label):
+                st.write(thesis or "*(no thesis text)*")
+
+
+# ---------------------------------------------------------------------------
+# Tab 6 – Company Detail
 # ---------------------------------------------------------------------------
 
 def render_company_tab(df: pd.DataFrame) -> None:
