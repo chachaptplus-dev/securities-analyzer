@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-# ── Authoritative company → sector mapping (~150 Korean stocks) ───────────────
-# Keys are canonical company names; matching also handles space variants and
-# dirty prefixes like "Issue Comment비에이치" via partial matching.
+# ── Authoritative company → sector mapping ────────────────────────────────────
+# Keys are canonical company names; matching handles space variants and dirty
+# prefixes like "Issue Comment비에이치" via partial matching.
 COMPANY_SECTOR: dict[str, str] = {
     # ── Semiconductors ────────────────────────────────────────────────────────
     "삼성전자":         "Semiconductors",
@@ -14,6 +14,7 @@ COMPANY_SECTOR: dict[str, str] = {
     "DB하이텍":         "Semiconductors",
     "원익IPS":          "Semiconductors",
     "솔브레인":         "Semiconductors",
+    "솔브레인홀딩스":   "Semiconductors",
     "리노공업":         "Semiconductors",
     "ISC":              "Semiconductors",
     "피에스케이":       "Semiconductors",
@@ -36,6 +37,25 @@ COMPANY_SECTOR: dict[str, str] = {
     "지앤비에스 에코":  "Semiconductors",
     "비나텍":           "Semiconductors",
     "디케이티":         "Semiconductors",
+    "한미반도체":       "Semiconductors",
+    "주성엔지니어링":   "Semiconductors",
+    "동진쎄미켐":       "Semiconductors",
+    "에스케이씨":       "Semiconductors",
+    "SKC":              "Semiconductors",
+    "어보브반도체":     "Semiconductors",
+    "기가레인":         "Semiconductors",
+    "코미코":           "Semiconductors",
+    "하나마이크론":     "Semiconductors",
+    "테크윙":           "Semiconductors",
+    "이오테크닉스":     "Semiconductors",
+    "원익머트리얼즈":   "Semiconductors",
+    "원익홀딩스":       "Semiconductors",
+    "케이씨텍":         "Semiconductors",
+    "유진테크":         "Semiconductors",
+    "와이아이케이":     "Semiconductors",
+    "인텍플러스":       "Semiconductors",
+    "디와이파워":       "Semiconductors",
+    "엠케이전자":       "Semiconductors",
     # ── Battery / EV ─────────────────────────────────────────────────────────
     "삼성SDI":          "Battery / EV",
     "LG에너지솔루션":   "Battery / EV",
@@ -49,8 +69,19 @@ COMPANY_SECTOR: dict[str, str] = {
     "천보":             "Battery / EV",
     "성일하이텍":       "Battery / EV",
     "더블유씨피":       "Battery / EV",
+    "일진머티리얼즈":   "Battery / EV",
+    "동화기업":         "Battery / EV",
+    "원익피앤이":       "Battery / EV",
+    "나라엠앤디":       "Battery / EV",
+    "신흥에스이씨":     "Battery / EV",
+    "씨아이에스":       "Battery / EV",
+    "엔켐":             "Battery / EV",
+    "뉴로메카":         "Battery / EV",
+    "엠플러스":         "Battery / EV",
+    "지아이텍":         "Battery / EV",   # ESS/battery equipment
     # ── Automotive ───────────────────────────────────────────────────────────
     "현대차":           "Automotive",
+    "현대자동차":       "Automotive",
     "기아":             "Automotive",
     "현대모비스":       "Automotive",
     "현대위아":         "Automotive",
@@ -62,6 +93,17 @@ COMPANY_SECTOR: dict[str, str] = {
     "한국타이어앤테크놀로지": "Automotive",
     "넥센타이어":       "Automotive",
     "성우하이텍":       "Automotive",
+    "현대글로비스":     "Automotive",
+    "세방전지":         "Automotive",
+    "상신브레이크":     "Automotive",
+    "서연이화":         "Automotive",
+    "모베이스":         "Automotive",
+    "화신":             "Automotive",
+    "KG모빌리티":       "Automotive",
+    "SNT모티브":        "Automotive",
+    "피에이치에이":     "Automotive",
+    "한국단자":         "Automotive",
+    "롯데렌탈":         "Automotive",
     # ── Healthcare / Bio ─────────────────────────────────────────────────────
     "삼성바이오로직스": "Healthcare / Bio",
     "셀트리온":         "Healthcare / Bio",
@@ -83,9 +125,41 @@ COMPANY_SECTOR: dict[str, str] = {
     "레고켐바이오":     "Healthcare / Bio",
     "오스코텍":         "Healthcare / Bio",
     "SK바이오팜":       "Healthcare / Bio",
+    "SK바이오사이언스": "Healthcare / Bio",
     "알지노믹스":       "Healthcare / Bio",
     "디오":             "Healthcare / Bio",
     "파미셀":           "Healthcare / Bio",
+    "녹십자":           "Healthcare / Bio",
+    "일동제약":         "Healthcare / Bio",
+    "보령":             "Healthcare / Bio",
+    "JW중외제약":       "Healthcare / Bio",
+    "한독":             "Healthcare / Bio",
+    "동화약품":         "Healthcare / Bio",
+    "제넥신":           "Healthcare / Bio",
+    "메디톡스":         "Healthcare / Bio",
+    "제테마":           "Healthcare / Bio",
+    "휴온스":           "Healthcare / Bio",
+    "비씨월드제약":     "Healthcare / Bio",
+    "영진약품":         "Healthcare / Bio",
+    "국제약품":         "Healthcare / Bio",
+    "코오롱티슈진":     "Healthcare / Bio",
+    "압타머사이언스":   "Healthcare / Bio",
+    "에스바이오메딕스": "Healthcare / Bio",
+    "바텍":             "Healthcare / Bio",
+    "오스템임플란트":   "Healthcare / Bio",
+    "인바디":           "Healthcare / Bio",
+    "루닛":             "Healthcare / Bio",
+    "뷰노":             "Healthcare / Bio",
+    "딥노이드":         "Healthcare / Bio",
+    "지씨셀":           "Healthcare / Bio",
+    "툴젠":             "Healthcare / Bio",
+    "리센스메디컬":     "Healthcare / Bio",
+    "씨어스":           "Healthcare / Bio",
+    "오스테오닉":       "Healthcare / Bio",
+    "큐라클":           "Healthcare / Bio",
+    "에스지헬스케어":   "Healthcare / Bio",
+    "지엘팜텍":         "Healthcare / Bio",
+    "피앤에스로보틱스": "Healthcare / Bio",
     # ── Financials ───────────────────────────────────────────────────────────
     "KB금융":           "Financials",
     "신한지주":         "Financials",
@@ -98,8 +172,12 @@ COMPANY_SECTOR: dict[str, str] = {
     "키움증권":         "Financials",
     "한국금융지주":     "Financials",
     "메리츠금융지주":   "Financials",
+    "메리츠화재":       "Financials",
+    "메리츠증권":       "Financials",
     "iM금융지주":       "Financials",
     "JB금융지주":       "Financials",
+    "BNK금융지주":      "Financials",
+    "DGB금융지주":      "Financials",
     "기업은행":         "Financials",
     "삼성생명":         "Financials",
     "삼성화재":         "Financials",
@@ -108,12 +186,24 @@ COMPANY_SECTOR: dict[str, str] = {
     "한화생명":         "Financials",
     "카카오뱅크":       "Financials",
     "케이뱅크":         "Financials",
+    "교보증권":         "Financials",
+    "대신증권":         "Financials",
+    "유안타증권":       "Financials",
+    "흥국화재":         "Financials",
+    "롯데카드":         "Financials",
+    "현대카드":         "Financials",
+    "신한카드":         "Financials",
+    "헥토파이낸셜":     "Financials",
     # ── IT / Platform ────────────────────────────────────────────────────────
     "카카오":           "IT / Platform",
     "NAVER":            "IT / Platform",
     "네이버":           "IT / Platform",
     "카카오페이":       "IT / Platform",
     "엔비티":           "IT / Platform",
+    "NHN":              "IT / Platform",
+    "야놀자":           "IT / Platform",
+    "직방":             "IT / Platform",
+    "오늘의집":         "IT / Platform",
     # ── IT / Software ────────────────────────────────────────────────────────
     "삼성에스디에스":   "IT / Software",
     "SK스퀘어":         "IT / Software",
@@ -121,6 +211,16 @@ COMPANY_SECTOR: dict[str, str] = {
     "쿠콘":             "IT / Software",
     "아이씨티케이":     "IT / Software",
     "ICTK":             "IT / Software",
+    "브레인즈컴퍼니":   "IT / Software",
+    "이지케어텍":       "IT / Software",
+    "이노룰스":         "IT / Software",
+    "한컴":             "IT / Software",
+    "한글과컴퓨터":     "IT / Software",
+    "LG씨엔에스":       "IT / Software",
+    "롯데이노베이트":   "IT / Software",
+    "현대오토에버":     "IT / Software",
+    "휴네시온":         "IT / Software",
+    "엠로":             "IT / Software",
     # ── Telecom ──────────────────────────────────────────────────────────────
     "SK텔레콤":         "Telecom",
     "KT":               "Telecom",
@@ -130,6 +230,10 @@ COMPANY_SECTOR: dict[str, str] = {
     "KMW":              "Telecom",
     "쏠리드":           "Telecom",
     "유비쿼스":         "Telecom",
+    "이노와이어리스":   "Telecom",
+    "세종텔레콤":       "Telecom",
+    "한국정보통신":     "Telecom",
+    "인텔리안테크":     "Electronics",    # satellite antenna
     # ── Electronics ──────────────────────────────────────────────────────────
     "LG전자":           "Electronics",
     "LG이노텍":         "Electronics",
@@ -138,7 +242,24 @@ COMPANY_SECTOR: dict[str, str] = {
     "비에이치":         "Electronics",
     "대덕전자":         "Electronics",
     "소룩스":           "Electronics",
-    # ── Industrial Equipment ─────────────────────────────────────────────────
+    "자화전자":         "Electronics",
+    "엠씨넥스":         "Electronics",
+    "세코닉스":         "Electronics",
+    "대덕GDS":          "Electronics",
+    "인터플렉스":       "Electronics",
+    "일진디스플레이":   "Electronics",
+    "하이비젼시스템":   "Electronics",
+    "옵티코어":         "Electronics",
+    "모델솔루션":       "Electronics",
+    "이녹스":           "Electronics",
+    "와이엠티":         "Semiconductors",  # PCB process chemicals
+    "해성디에스":       "Semiconductors",  # semiconductor lead frames
+    "삼양엔씨켐":       "Semiconductors",
+    "엑시콘":           "Semiconductors",  # semiconductor test equipment
+    "티씨케이":         "Semiconductors",
+    "브이엠":           "Semiconductors",
+    "한솔케미칼":       "Semiconductors",  # semiconductor/display materials; primary = semicon
+    # ── Industrial Equipment / Power ─────────────────────────────────────────
     "LS ELECTRIC":      "Industrial Equipment",
     "HD현대일렉트릭":   "Industrial Equipment",
     "효성중공업":       "Industrial Equipment",
@@ -146,9 +267,15 @@ COMPANY_SECTOR: dict[str, str] = {
     "일진전기":         "Industrial Equipment",
     "제룡전기":         "Industrial Equipment",
     "대한전선":         "Industrial Equipment",
+    "LS":               "Industrial Equipment",
+    "가온전선":         "Industrial Equipment",
+    "가온그룹":         "Industrial Equipment",
     # ── Display ──────────────────────────────────────────────────────────────
     "LG디스플레이":     "Display",
     "덕산네오룩스":     "Display",
+    "에이치엔에스":     "Display",
+    "파인텍":           "Display",
+    "에스에프에이":     "Display",
     # ── Shipbuilding ─────────────────────────────────────────────────────────
     "HD현대중공업":     "Shipbuilding",
     "한화오션":         "Shipbuilding",
@@ -158,6 +285,7 @@ COMPANY_SECTOR: dict[str, str] = {
     "HJ중공업":         "Shipbuilding",
     "한화엔진":         "Shipbuilding",
     "HD현대마린솔루션": "Shipbuilding",
+    "대한조선":         "Shipbuilding",
     # ── Defense ──────────────────────────────────────────────────────────────
     "한화에어로스페이스": "Defense",
     "한화시스템":       "Defense",
@@ -166,6 +294,13 @@ COMPANY_SECTOR: dict[str, str] = {
     "LIG넥스원":        "Defense",
     "RFHIC":            "Defense",
     "풍산":             "Defense",
+    "빅텍":             "Defense",
+    "퍼스텍":           "Defense",
+    "한국화이바":       "Defense",
+    "삼양컴텍":         "Defense",
+    "엠앤씨솔루션":     "Defense",
+    "LIG 디펜스앤에어로스페이스": "Defense",
+    "코츠테크놀로지":   "Defense",
     # ── Steel / Metals ───────────────────────────────────────────────────────
     "POSCO홀딩스":      "Steel / Metals",
     "포스코홀딩스":     "Steel / Metals",
@@ -176,40 +311,84 @@ COMPANY_SECTOR: dict[str, str] = {
     "세아베스틸":       "Steel / Metals",
     "태웅":             "Steel / Metals",
     "성광벤드":         "Steel / Metals",
+    "태광":             "Steel / Metals",  # pipeline fittings
     "동국홀딩스":       "Steel / Metals",
+    "고려아연":         "Steel / Metals",
+    "영풍":             "Steel / Metals",
+    "풍산홀딩스":       "Steel / Metals",
     # ── Construction ─────────────────────────────────────────────────────────
     "현대건설":         "Construction",
     "GS건설":           "Construction",
     "대우건설":         "Construction",
     "DL이앤씨":         "Construction",
     "삼성E&A":          "Construction",
-    "IPARK현대산업개발":"Construction",
     "HDC현대산업개발":  "Construction",
     "자이에스앤디":     "Construction",
     "한미글로벌":       "Construction",
     "HDC":              "Construction",
-    "HD건설기계":       "Construction",
     "SGC에너지":        "Construction",
+    "HL디앤아이한라":   "Construction",
+    "HL D&I":           "Construction",
+    "동부건설":         "Construction",
+    "엔알비":           "Construction",
+    "태영건설":         "Construction",
+    "한신공영":         "Construction",
+    "계룡건설":         "Construction",
     # ── Chemicals ────────────────────────────────────────────────────────────
     "LG화학":           "Chemicals",
     "롯데케미칼":       "Chemicals",
     "금호석유":         "Chemicals",
+    "OCI":              "Chemicals",
+    "KCC":              "Chemicals",
+    "효성티앤씨":       "Chemicals",
+    "효성첨단소재":     "Chemicals",
+    "코오롱인더":       "Chemicals",
+    "코오롱인더스트리": "Chemicals",
+    "한화임팩트":       "Chemicals",
+    "동성화인텍":       "Chemicals",
+    "이수화학":         "Chemicals",
+    "켐트로스":         "Chemicals",
+    "NPC":              "Chemicals",
+    "유니드":           "Chemicals",
     # ── Renewables ───────────────────────────────────────────────────────────
     "한화솔루션":       "Renewables",
     "OCI홀딩스":        "Renewables",
     "LS에코에너지":     "Renewables",
+    "씨에스윈드":       "Renewables",
+    "동국시스템즈":     "Renewables",
     # ── Energy / Utilities ───────────────────────────────────────────────────
     "한국전력":         "Utilities",
     "한국가스공사":     "Utilities",
     "서부T&D":          "Utilities",
+    "한국수력원자력":   "Utilities",
+    "두산퓨얼셀":       "Utilities",
     "GS피앤엘":         "Energy",
     "포스코인터내셔널": "Energy",
     "SK가스":           "Energy",
+    "S-Oil":            "Energy",
+    "S-OIL":            "Energy",
+    "Oil":              "Energy",         # dirty name variant of S-Oil
+    "에쓰오일":         "Energy",
+    "GS칼텍스":         "Energy",
+    "HD현대오일뱅크":   "Energy",
+    "태양":             "Energy",         # LPG/butane gas manufacturer
+    "SGC에너지":        "Energy",
+    "SGC 에너지":       "Energy",
     # ── Heavy Industry / Machinery ───────────────────────────────────────────
     "두산에너빌리티":   "Heavy Industry",
     "두산밥캣":         "Heavy Industry",
     "두산":             "Heavy Industry",
     "HD현대":           "Heavy Industry",
+    "HD현대건설기계":   "Heavy Industry",
+    "현대두산인프라코어": "Heavy Industry",
+    # ── Logistics ────────────────────────────────────────────────────────────
+    "CJ대한통운":       "Logistics",
+    "한진":             "Logistics",
+    "롯데글로벌로지스": "Logistics",
+    "현대글로벌서비스": "Logistics",
+    "KL넷":             "Logistics",
+    "인터지스":         "Logistics",
+    "동방":             "Logistics",
     # ── Retail ───────────────────────────────────────────────────────────────
     "이마트":           "Retail",
     "신세계":           "Retail",
@@ -220,6 +399,10 @@ COMPANY_SECTOR: dict[str, str] = {
     "한샘":             "Retail",
     "현대백화점":       "Retail",
     "한국가구":         "Retail",
+    "롯데쇼핑":         "Retail",
+    "쿠팡":             "Retail",
+    "무신사":           "Retail",
+    "현대지에프홀딩스": "Retail",
     # ── Food / Consumer ──────────────────────────────────────────────────────
     "농심":             "Food / Consumer",
     "오리온":           "Food / Consumer",
@@ -228,6 +411,20 @@ COMPANY_SECTOR: dict[str, str] = {
     "CJ프레시웨이":     "Food / Consumer",
     "하이트진로":       "Food / Consumer",
     "삼양식품":         "Food / Consumer",
+    "롯데칠성":         "Food / Consumer",
+    "롯데웰푸드":       "Food / Consumer",
+    "매일유업":         "Food / Consumer",
+    "KT&G":             "Food / Consumer",  # tobacco
+    "국순당":           "Food / Consumer",  # traditional liquor
+    "오뚜기":           "Food / Consumer",
+    "동원F&B":          "Food / Consumer",
+    "대상":             "Food / Consumer",
+    "SPC삼립":          "Food / Consumer",
+    "풀무원":           "Food / Consumer",
+    "해태제과식품":     "Food / Consumer",
+    "크라운제과":       "Food / Consumer",
+    "롯데제과":         "Food / Consumer",
+    "오비맥주":         "Food / Consumer",
     # ── Beauty / Cosmetics ───────────────────────────────────────────────────
     "아모레퍼시픽":     "Beauty / Cosmetics",
     "LG생활건강":       "Beauty / Cosmetics",
@@ -235,19 +432,53 @@ COMPANY_SECTOR: dict[str, str] = {
     "한국콜마":         "Beauty / Cosmetics",
     "에이피알":         "Beauty / Cosmetics",
     "실리콘투":         "Beauty / Cosmetics",
+    "클리오":           "Beauty / Cosmetics",
+    "브이티":           "Beauty / Cosmetics",
+    "제이준코스메틱":   "Beauty / Cosmetics",
+    "토니모리":         "Beauty / Cosmetics",
+    "스킨푸드":         "Beauty / Cosmetics",
+    "애경산업":         "Beauty / Cosmetics",
+    "CJ올리브영":       "Beauty / Cosmetics",
+    "제닉":             "Beauty / Cosmetics",
     # ── Fashion / Apparel ────────────────────────────────────────────────────
     "한섬":             "Fashion / Apparel",
     "신세계인터내셔날": "Fashion / Apparel",
     "감성코퍼레이션":   "Fashion / Apparel",
     "한세실업":         "Fashion / Apparel",
     "에이유브랜즈":     "Fashion / Apparel",
+    "F&F":              "Fashion / Apparel",
+    "영원무역":         "Fashion / Apparel",
+    "휠라홀딩스":       "Fashion / Apparel",
+    "코오롱FnC":        "Fashion / Apparel",
+    "LF":               "Fashion / Apparel",
+    "삼성물산패션":     "Fashion / Apparel",
+    "미스토홀딩스":     "Fashion / Apparel",
+    "젝시믹스":         "Fashion / Apparel",
     # ── Entertainment ────────────────────────────────────────────────────────
     "하이브":           "Entertainment",
     "에스엠":           "Entertainment",
     "와이지엔터테인먼트": "Entertainment",
     "JYP Ent":          "Entertainment",
+    "JYP엔터테인먼트":  "Entertainment",
     "스튜디오드래곤":   "Entertainment",
     "CJ ENM":           "Entertainment",
+    "카카오엔터테인먼트": "Entertainment",
+    "키이스트":         "Entertainment",
+    "에이스토리":       "Entertainment",
+    "빅히트엔터테인먼트": "Entertainment",
+    "YG PLUS":          "Entertainment",
+    "SBS":              "Entertainment",
+    "콘텐트리중앙":     "Entertainment",
+    "쇼박스":           "Entertainment",
+    "덱스터":           "Entertainment",
+    "자이언트스텝":     "Entertainment",
+    "디어유":           "Entertainment",
+    "에프엔씨엔터":     "Entertainment",
+    # dirty report-title company names that are K-pop/entertainment related
+    "스트레이키즈 Everywhere": "Entertainment",
+    "글로벌 팬덤 기반 성장 레버리지 확대": "Entertainment",
+    "2026년 MD 전략 변화에 주목할 시점": "Entertainment",
+    "투자의견":         "Entertainment",  # broker boilerplate captured as company
     # ── Gaming ───────────────────────────────────────────────────────────────
     "엔씨소프트":       "Gaming",
     "크래프톤":         "Gaming",
@@ -255,86 +486,189 @@ COMPANY_SECTOR: dict[str, str] = {
     "더블유게임즈":     "Gaming",
     "넥슨게임즈":       "Gaming",
     "카카오게임즈":     "Gaming",
+    "넷마블":           "Gaming",
+    "컴투스":           "Gaming",
+    "게임빌":           "Gaming",
+    "위메이드":         "Gaming",
+    "선데이토즈":       "Gaming",
+    "데브시스터즈":     "Gaming",
+    "스마일게이트":     "Gaming",
+    "네오위즈":         "Gaming",
+    "시프트업":         "Gaming",
+    "NC":               "Gaming",         # NCSoft abbreviation
     # ── Media / Advertising ──────────────────────────────────────────────────
     "제일기획":         "Media / Advertising",
+    "이노션":           "Media / Advertising",
+    "cheil":            "Media / Advertising",
     # ── Hotels / Leisure ─────────────────────────────────────────────────────
     "호텔신라":         "Hotels / Leisure",
     "강원랜드":         "Hotels / Leisure",
+    "파라다이스":       "Hotels / Leisure",
+    "GKL":              "Hotels / Leisure",
     # ── Airlines ─────────────────────────────────────────────────────────────
     "대한항공":         "Airlines",
     "아시아나항공":     "Airlines",
     "제주항공":         "Airlines",
     "에어부산":         "Airlines",
+    "진에어":           "Airlines",
+    "에어서울":         "Airlines",
+    "티웨이항공":       "Airlines",
     # ── Shipping ─────────────────────────────────────────────────────────────
     "HMM":              "Shipping",
     "팬오션":           "Shipping",
+    "대한해운":         "Shipping",
+    "흥아해운":         "Shipping",
+    # ── Education ────────────────────────────────────────────────────────────
+    "메가스터디교육":   "Education",
+    "메가스터디":       "Education",
+    "대교":             "Education",
+    "웅진씽크빅":       "Education",
+    "아이스크림에듀":   "Education",
+    "비상교육":         "Education",
+    "크레버스":         "Education",
+    # ── IT Hardware ──────────────────────────────────────────────────────────
+    "아모센스":         "IT Hardware",   # wireless charging / RF components
+    # ── Real Estate ──────────────────────────────────────────────────────────
+    "제이알글로벌리츠": "Real Estate",
+    "SK리츠":           "Real Estate",
+    "롯데리츠":         "Real Estate",
+    "맵스리얼티":       "Real Estate",
+    "신한알파리츠":     "Real Estate",
+    "이지스밸류리츠":   "Real Estate",
+    # ── Conglomerates ────────────────────────────────────────────────────────
+    "SK":               "Conglomerates",
+    "LG":               "Conglomerates",
+    "롯데지주":         "Conglomerates",
+    "CJ":               "Conglomerates",
+    "LS":               "Conglomerates",
+    "GS":               "Conglomerates",
+    "효성":             "Conglomerates",
+    "한화":             "Conglomerates",
+    "LX인터내셔널":     "Conglomerates",
+    # dirty Earnings Preview prefix + company name
+    "Earnings PreviewF&F":  "Fashion / Apparel",
+    "Earnings PreviewLS":   "Industrial Equipment",
+    # dirty report-title company name — E1 LPG earnings
+    "양호한 실적 전망과 경계심의 공존": "Energy",
+    "하츠":             "Electronics",    # kitchen appliances (range hoods)
+    "LX홀딩스":         "Conglomerates",
+    # dirty initiation report company names — conglomerate holding cos
+    "InitiationCJ":     "Conglomerates",
+    "InitiationLG":     "Conglomerates",
+    "InitiationSK":     "Conglomerates",
+    "Initiation삼양엔씨켐": "Semiconductors",
+    "두산퓨얼셀":       "Utilities",     # override for 두산 partial match
+    "두산테스나":       "Semiconductors", # override for 두산 partial match
 }
 
 # ── Keyword → sector fallback (thesis + company name text scan) ───────────────
 # Priority-ordered: specific terms before generic ones.
 SECTOR_MAP: list[tuple[str, str]] = [
     # Sector keywords
-    ("반도체",      "Semiconductors"),
-    ("메모리",      "Semiconductors"),
-    ("파운드리",    "Semiconductors"),
-    ("hbm",         "Semiconductors"),
-    ("낸드",        "Semiconductors"),
-    ("dram",        "Semiconductors"),
-    ("배터리",      "Battery / EV"),
-    ("전기차",      "Battery / EV"),
-    ("2차전지",     "Battery / EV"),
-    ("양극재",      "Battery / EV"),
-    ("음극재",      "Battery / EV"),
-    ("바이오",      "Healthcare / Bio"),
-    ("제약",        "Healthcare / Bio"),
-    ("임상",        "Healthcare / Bio"),
-    ("신약",        "Healthcare / Bio"),
-    ("의약품",      "Healthcare / Bio"),
-    ("은행",        "Financials"),
-    ("금융투자",    "Financials"),
-    ("보험",        "Financials"),
-    ("증권",        "Financials"),
-    ("조선",        "Shipbuilding"),
-    ("선박",        "Shipbuilding"),
-    ("방산",        "Defense"),
-    ("무기체계",    "Defense"),
-    ("인공지능",    "AI / Data"),
-    ("클라우드",    "AI / Data"),
-    ("데이터센터",  "AI / Data"),
-    ("소프트웨어",  "IT / Software"),
-    ("플랫폼",      "IT / Platform"),
-    ("이커머스",    "IT / Platform"),
-    ("인터넷",      "IT / Platform"),
-    ("엔터테인먼트","Entertainment"),
-    ("게임",        "Gaming"),
-    ("항공",        "Airlines"),
-    ("카지노",      "Hotels / Leisure"),
-    ("리조트",      "Hotels / Leisure"),
-    ("석유화학",    "Chemicals"),     # before "화학"
-    ("화학",        "Chemicals"),
-    ("정유",        "Energy / Chemicals"),
-    ("철강",        "Steel / Metals"),
-    ("알루미늄",    "Steel / Metals"),
-    ("건설",        "Construction"),
-    ("자동차",      "Automotive"),
-    ("전기전자",    "Electronics"),   # before "전자"
-    ("전자",        "Electronics"),
-    ("디스플레이",  "Display"),
-    ("oled",        "Display"),
-    ("통신",        "Telecom"),
-    ("유통",        "Retail"),
-    ("식품",        "Food / Consumer"),
-    ("금융",        "Financials"),    # broad fallback
-    ("태양광",      "Renewables"),
-    ("수소",        "Renewables"),
-    ("에너지",      "Energy"),
+    ("반도체",        "Semiconductors"),
+    ("메모리",        "Semiconductors"),
+    ("파운드리",      "Semiconductors"),
+    ("hbm",           "Semiconductors"),
+    ("낸드",          "Semiconductors"),
+    ("dram",          "Semiconductors"),
+    ("배터리",        "Battery / EV"),
+    ("전기차",        "Battery / EV"),
+    ("2차전지",       "Battery / EV"),
+    ("양극재",        "Battery / EV"),
+    ("음극재",        "Battery / EV"),
+    ("바이오",        "Healthcare / Bio"),
+    ("제약",          "Healthcare / Bio"),
+    ("임상",          "Healthcare / Bio"),
+    ("신약",          "Healthcare / Bio"),
+    ("의약품",        "Healthcare / Bio"),
+    ("은행",          "Financials"),
+    ("금융투자",      "Financials"),
+    ("보험",          "Financials"),
+    ("증권",          "Financials"),
+    ("조선",          "Shipbuilding"),
+    ("선박",          "Shipbuilding"),
+    ("방산",          "Defense"),
+    ("무기체계",      "Defense"),
+    ("인공지능",      "AI / Data"),
+    ("클라우드",      "AI / Data"),
+    ("데이터센터",    "AI / Data"),
+    ("소프트웨어",    "IT / Software"),
+    ("플랫폼",        "IT / Platform"),
+    ("이커머스",      "IT / Platform"),
+    ("인터넷",        "IT / Platform"),
+    ("엔터테인먼트",  "Entertainment"),
+    ("엔터",          "Entertainment"),
+    ("kpop",          "Entertainment"),
+    ("k-pop",         "Entertainment"),
+    ("음반",          "Entertainment"),
+    ("앨범",          "Entertainment"),
+    ("게임",          "Gaming"),
+    ("항공",          "Airlines"),
+    ("카지노",        "Hotels / Leisure"),
+    ("리조트",        "Hotels / Leisure"),
+    ("물류",          "Logistics"),
+    ("택배",          "Logistics"),
+    ("리츠",          "Real Estate"),
+    ("부동산",        "Real Estate"),
+    ("원전",          "Utilities"),
+    ("발전",          "Utilities"),
+    ("석유화학",      "Chemicals"),    # before "화학"
+    ("화학",          "Chemicals"),
+    ("정유",          "Energy / Chemicals"),
+    ("lpg",           "Energy"),
+    ("lng",           "Energy"),
+    ("철강",          "Steel / Metals"),
+    ("알루미늄",      "Steel / Metals"),
+    ("건설",          "Construction"),
+    ("완성차",        "Automotive"),
+    ("자동차",        "Automotive"),
+    ("전기전자",      "Electronics"),  # before "전자"
+    ("전자",          "Electronics"),
+    ("디스플레이",    "Display"),
+    ("oled",          "Display"),
+    ("통신",          "Telecom"),
+    ("유통",          "Retail"),
+    ("식품",          "Food / Consumer"),
+    ("금융",          "Financials"),   # broad fallback
+    ("태양광",        "Renewables"),
+    ("수소",          "Renewables"),
+    ("에너지",        "Energy"),
+    ("vfx",           "Entertainment"),
+    ("콘텐츠",        "Entertainment"),
 ]
 
 _STRIP_RE = re.compile(r'[\s\-·.★☆♦◆●▶①②③]')
+_HAS_KOREAN = re.compile(r'[가-힣]')
 
 
 def _norm(s: str) -> str:
     return _STRIP_RE.sub("", s).lower()
+
+
+def map_company(company: str) -> Optional[str]:
+    """Company-map lookup only (no keyword fallback).
+
+    Partial matching uses a length threshold that depends on script:
+    - Korean-containing keys: min length 2 (catches 기아, 한화, 두산, etc.)
+    - Pure-Latin/number keys: min length 4 (prevents SK/LG/CJ false positives)
+    """
+    company_norm = _norm(company)
+    if not company_norm:
+        return None
+
+    # 1. Exact match
+    for key, sector in COMPANY_SECTOR.items():
+        if _norm(key) == company_norm:
+            return sector
+
+    # 2. Partial match
+    for key, sector in COMPANY_SECTOR.items():
+        key_n = _norm(key)
+        min_len = 2 if _HAS_KOREAN.search(key_n) else 4
+        if len(key_n) >= min_len and key_n in company_norm:
+            return sector
+
+    return None
 
 
 def infer_sector(thesis: str, company: str = "") -> Optional[str]:
@@ -342,24 +676,13 @@ def infer_sector(thesis: str, company: str = "") -> Optional[str]:
     Return the first matching English sector label, or None.
 
     Priority:
-      1. Exact company-map lookup (after normalization)
-      2. Partial company-map lookup (map key contained in company name, key ≥ 3 chars)
-      3. Keyword scan of company name + thesis text
+      1. Company-map lookup (exact then partial, with Korean/Latin threshold)
+      2. Keyword scan of company name + thesis text
     """
-    company_norm = _norm(company)
+    sector = map_company(company)
+    if sector:
+        return sector
 
-    # 1. Exact match
-    for key, sector in COMPANY_SECTOR.items():
-        if _norm(key) == company_norm:
-            return sector
-
-    # 2. Partial match — handles "Issue Comment비에이치", space variants, etc.
-    for key, sector in COMPANY_SECTOR.items():
-        key_n = _norm(key)
-        if len(key_n) >= 3 and key_n in company_norm:
-            return sector
-
-    # 3. Keyword scan on combined text
     text = f"{company} {thesis}".lower()
     for kw, sector in SECTOR_MAP:
         if kw.lower() in text:

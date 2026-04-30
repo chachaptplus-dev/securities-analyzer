@@ -119,7 +119,7 @@ def backfill_sectors() -> tuple[int, int]:
 
     Returns (pass1_count, pass2_count).
     """
-    from src.sector import infer_sector, COMPANY_SECTOR, _norm
+    from src.sector import infer_sector, map_company
 
     con = _con()
     all_rows = con.execute("SELECT id, company, thesis, sector FROM reports").fetchall()
@@ -127,15 +127,8 @@ def backfill_sectors() -> tuple[int, int]:
     pass1 = pass2 = 0
 
     for row_id, company, thesis, current_sector in all_rows:
-        company_norm = _norm(company or "")
-
-        # Pass 1: authoritative company-map lookup
-        mapped = None
-        for key, sector in COMPANY_SECTOR.items():
-            key_n = _norm(key)
-            if key_n == company_norm or (len(key_n) >= 3 and key_n in company_norm):
-                mapped = sector
-                break
+        # Pass 1: authoritative company-map lookup (uses Korean/Latin threshold fix)
+        mapped = map_company(company or "")
 
         if mapped and mapped != current_sector:
             con.execute("UPDATE reports SET sector = ? WHERE id = ?", [mapped, row_id])

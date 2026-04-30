@@ -6,6 +6,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.sector_intelligence import (
+    detect_surges,
+    sector_cooccurrence,
+    weekly_sector_counts,
+)
+
 
 # ---------------------------------------------------------------------------
 # Tab 1 – PDF Upload
@@ -267,6 +273,98 @@ def render_sector_trends_tab(df: pd.DataFrame) -> None:
         )
         fig_up.update_layout(coloraxis_showscale=False, margin=dict(l=160))
         st.plotly_chart(fig_up, use_container_width=True)
+
+    # ── Surge Detection ──────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Surge Detection")
+    st.caption("Comparing last 4 weeks vs. the prior 4 weeks")
+
+    surges = detect_surges(tagged)
+    if surges.empty:
+        st.info("No sector surges detected (need ≥2 reports in recent window and ≥1.5× ratio).")
+    else:
+        cols = st.columns(min(len(surges), 4))
+        for i, (_, row) in enumerate(surges.iterrows()):
+            if i >= 8:
+                break
+            col = cols[i % 4]
+            ratio_str = f"{row['ratio']:.1f}×" if row["ratio"] is not None else "new"
+            col.metric(
+                label=f"{row['tier']}  {row['sector']}",
+                value=f"{row['recent_n']} reports",
+                delta=f"{ratio_str} vs prior 4w  (was {row['prior_n']})",
+            )
+
+    # ── Weekly Trend ─────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Weekly Report Activity")
+
+    pivot = weekly_sector_counts(tagged)
+    if pivot.empty or len(pivot) < 2:
+        st.info("Not enough dated reports to show a weekly trend.")
+    else:
+        # Default: top 8 sectors by total volume
+        top8 = sector_stats.head(8)["sector"].tolist()
+        available = [s for s in pivot.columns if s in sector_stats["sector"].values]
+        default_sel = [s for s in top8 if s in available]
+
+        selected = st.multiselect(
+            "Sectors to display",
+            options=available,
+            default=default_sel,
+            key="weekly_trend_sectors",
+        )
+
+        if selected:
+            long = (
+                pivot[selected]
+                .reset_index()
+                .melt(id_vars="week", var_name="sector", value_name="reports")
+            )
+            long["week"] = long["week"].dt.strftime("%Y-%m-%d")
+
+            fig_trend = px.line(
+                long,
+                x="week",
+                y="reports",
+                color="sector",
+                markers=True,
+                title="Weekly Report Count by Sector",
+                labels={"week": "Week starting", "reports": "Reports", "sector": "Sector"},
+            )
+            fig_trend.update_layout(
+                xaxis_tickangle=-30,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                margin=dict(t=80),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
+        else:
+            st.caption("Select at least one sector above.")
+
+    # ── Co-occurrence Heatmap ─────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Sector Co-occurrence")
+    st.caption("Number of days where both sectors had reports published — reveals analyst focus clusters")
+
+    cooc = sector_cooccurrence(tagged, min_days=2)
+    if cooc.empty:
+        st.info("Not enough data for co-occurrence analysis.")
+    else:
+        fig_heat = px.imshow(
+            cooc,
+            color_continuous_scale="Blues",
+            title="Sector Pair Co-occurrence (days)",
+            aspect="auto",
+            text_auto=True,
+        )
+        fig_heat.update_layout(
+            xaxis_tickangle=-40,
+            coloraxis_showscale=False,
+            margin=dict(l=160, b=160),
+        )
+        fig_heat.update_traces(textfont_size=10)
+        st.plotly_chart(fig_heat, use_container_width=True)
 
     # ── Sector deep-dive ─────────────────────────────────────────────────────
     st.divider()
