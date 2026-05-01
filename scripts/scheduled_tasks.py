@@ -206,18 +206,38 @@ def pre_generate_weekly_report() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def run_all_ordered() -> None:
+    """Run daily tasks sequentially in correct order: scrape → reparse → backfill."""
+    log.info("=== Task: all_ordered ===")
+
+    log.info("[1/3] Scraping new PDFs...")
+    try:
+        from src.scraper import scrape
+        n = scrape()
+        log.info(f"Scraper done: {n} new PDFs")
+    except Exception as exc:
+        log.exception(f"Scraper failed: {exc}")
+
+    log.info("[2/3] LLM reparse...")
+    run_llm_reparse()
+
+    log.info("[3/3] Sector backfill...")
+    run_sector_backfill()
+
+
 _TASK_MAP = {
     "reparse":      run_llm_reparse,
     "sector":       run_sector_backfill,
     "stock_master": update_stock_master,
     "weekly":       pre_generate_weekly_report,
+    "all_ordered":  run_all_ordered,
 }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run scheduled maintenance tasks")
     parser.add_argument(
         "--task",
-        choices=["all", "reparse", "sector", "stock_master", "weekly"],
+        choices=["all", "all_ordered", "reparse", "sector", "stock_master", "weekly"],
         default="all",
         help="Which task to run (default: all)",
     )

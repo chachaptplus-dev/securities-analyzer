@@ -42,19 +42,14 @@ Write-Output ""
 Write-Output "=== Registering SecuritiesAnalyzer scheduled tasks ==="
 Write-Output ""
 
-# Task 1: LLM reparse — every day at 09:00
+# Task 1: Daily pipeline — scrape → reparse → sector backfill (sequential, 08:00)
+# Replaces the old separate Reparse and SectorBackfill tasks.
+# To remove old tasks: Unregister-ScheduledTask -TaskName "SecuritiesAnalyzer-Reparse","SecuritiesAnalyzer-SectorBackfill" -Confirm:$false
 Register-AnalyzerTask `
-    -TaskName   "SecuritiesAnalyzer-Reparse" `
-    -TaskArg    "reparse" `
-    -Trigger    (New-ScheduledTaskTrigger -Daily -At "09:00") `
-    -Description "Daily LLM re-parse of UNKNOWN/NULL rows in securities DB"
-
-# Task 2: Sector backfill — every day at 09:05 (runs fast, after reparse)
-Register-AnalyzerTask `
-    -TaskName   "SecuritiesAnalyzer-SectorBackfill" `
-    -TaskArg    "sector" `
-    -Trigger    (New-ScheduledTaskTrigger -Daily -At "09:05") `
-    -Description "Daily NULL-sector backfill"
+    -TaskName   "SecuritiesAnalyzer-Daily" `
+    -TaskArg    "all_ordered" `
+    -Trigger    (New-ScheduledTaskTrigger -Daily -At "08:00") `
+    -Description "Daily pipeline: scrape new PDFs -> LLM reparse -> sector backfill"
 
 # Task 3: Weekly report pre-generation — every Monday at 08:00
 Register-AnalyzerTask `
@@ -126,7 +121,10 @@ Write-Output "Verify with:"
 Write-Output "  Get-ScheduledTask | Where-Object {`$_.TaskName -like 'SecuritiesAnalyzer*'} | Select TaskName, State"
 Write-Output ""
 Write-Output "Run a task manually:"
-Write-Output "  Start-ScheduledTask -TaskName 'SecuritiesAnalyzer-Reparse'"
+Write-Output "  Start-ScheduledTask -TaskName 'SecuritiesAnalyzer-Daily'"
+Write-Output ""
+Write-Output "Remove old separate tasks (if previously registered):"
+Write-Output "  Unregister-ScheduledTask -TaskName 'SecuritiesAnalyzer-Reparse','SecuritiesAnalyzer-SectorBackfill' -Confirm:`$false"
 Write-Output ""
 Write-Output "View logs:"
 Write-Output "  Get-Content $ProjectDir\data\scheduler.log -Tail 50"
