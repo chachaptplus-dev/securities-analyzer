@@ -22,8 +22,15 @@ from typing import Optional, List
 # Sentiment keywords (Fix E)
 # ---------------------------------------------------------------------------
 
-_POSITIVE_KW: frozenset[str] = frozenset({"성장", "호조", "개선", "확대", "수혜", "상승", "긍정", "기대"})
-_NEGATIVE_KW: frozenset[str] = frozenset({"부진", "악화", "하락", "우려", "리스크", "감소", "위축"})
+_POSITIVE_KW: list[str] = [
+    "성장", "호조", "개선", "확대", "수혜", "상승", "긍정", "기대",
+    "회복", "증가", "강세", "견조", "양호", "상향", "모멘텀",
+]
+_NEGATIVE_KW: list[str] = [
+    "부진", "악화", "하락", "우려", "리스크", "감소", "위축",
+    "둔화", "약세", "하향", "손실", "적자",
+]
+_NEGATION_WORDS: list[str] = ["않", "아닌", "없", "불구", "에도"]
 
 # ---------------------------------------------------------------------------
 # Company name sanitisation — strip report-type prefixes, reject sentences
@@ -483,21 +490,32 @@ def _date_from_filename(filename: str) -> Optional[str]:
 # Fix E: sentiment inference for UNKNOWN-rated reports
 # ---------------------------------------------------------------------------
 
-def _infer_sentiment(thesis: str) -> Optional[str]:
+def _infer_sentiment(thesis: str) -> str:
     """
-    Return 'POSITIVE'/'NEGATIVE'/None based on keyword counts.
-    Requires 3+ unique keyword hits for POSITIVE; 3+ for NEGATIVE.
-    Winner-takes-all if both cross threshold; ties → None.
+    Infer sentiment from thesis when no explicit rating is present.
+    Returns: POSITIVE | NEUTRAL | NEGATIVE | UNKNOWN
+    Negation check: negative keyword near a negation word is not counted.
     """
-    if not thesis:
-        return None
-    pos = sum(1 for kw in _POSITIVE_KW if kw in thesis)
-    neg = sum(1 for kw in _NEGATIVE_KW if kw in thesis)
-    if pos >= 3 and pos > neg:
+    if not thesis or len(thesis) < 50:
+        return "UNKNOWN"
+
+    pos_count = sum(1 for kw in _POSITIVE_KW if kw in thesis)
+
+    neg_count = 0
+    for kw in _NEGATIVE_KW:
+        if kw in thesis:
+            idx = thesis.find(kw)
+            surrounding = thesis[max(0, idx - 10):idx + len(kw) + 5]
+            if not any(neg in surrounding for neg in _NEGATION_WORDS):
+                neg_count += 1
+
+    if pos_count >= 4 and pos_count > neg_count * 2:
         return "POSITIVE"
-    if neg >= 3 and neg > pos:
+    if neg_count >= 3 and neg_count > pos_count * 2:
         return "NEGATIVE"
-    return None
+    if pos_count >= 2 or neg_count >= 2:
+        return "NEUTRAL"
+    return "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------

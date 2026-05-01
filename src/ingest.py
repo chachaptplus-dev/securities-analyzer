@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import duckdb
 
 from src.database import initialize_db, insert_report
-from src.extractor import extract_report_data
+from src.extractor import extract_report_data, _infer_sentiment
 from src.pdf_parser import extract_text_from_pdf
 from src.rating_normalizer import normalize_rating
 from src.sector import infer_sector
@@ -34,6 +34,8 @@ def _process(pdf_path: Path) -> bool:
         pdf_data = extract_text_from_pdf(str(pdf_path))
         report = extract_report_data(pdf_data)
         report["rating_normalized"] = normalize_rating(report.get("rating_raw"))
+        if report["rating_normalized"] == "UNKNOWN":
+            report["rating_normalized"] = _infer_sentiment(report.get("thesis") or "")
         tp = report.get("target_price")
         cp = report.get("current_price")
         if tp and cp and cp > 0 and tp > cp * 3:

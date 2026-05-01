@@ -33,7 +33,7 @@ from src.dashboard_components import (
 )
 from src.macro_analyzer import detect_new_themes
 from src.database import clear_all, get_all_reports, initialize_db, insert_report
-from src.extractor import extract_report_data
+from src.extractor import extract_report_data, _infer_sentiment
 from src.pdf_parser import extract_text_from_pdf
 from src.rating_normalizer import normalize_rating
 from src.scoring import calculate_buy_signal_score
@@ -152,6 +152,8 @@ def _process_files(uploaded_files: list) -> None:
             report = extract_report_data(pdf_data)
 
             report["rating_normalized"] = normalize_rating(report.get("rating_raw"))
+            if report["rating_normalized"] == "UNKNOWN":
+                report["rating_normalized"] = _infer_sentiment(report.get("thesis") or "")
 
             tp = report.get("target_price")
             cp = report.get("current_price")

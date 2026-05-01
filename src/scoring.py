@@ -18,9 +18,13 @@ def calculate_buy_signal_score(df: pd.DataFrame) -> pd.DataFrame:
         if not company:
             continue
 
-        buy_count = int((grp["rating_normalized"] == "BUY").sum())
-        hold_sell = int(grp["rating_normalized"].isin(["HOLD", "SELL"]).sum())
-        firm_count = int(grp["securities_firm"].nunique())
+        buy_count     = int((grp["rating_normalized"] == "BUY").sum())
+        positive_cnt  = int((grp["rating_normalized"] == "POSITIVE").sum())
+        neutral_cnt   = int((grp["rating_normalized"] == "NEUTRAL").sum())
+        hold_cnt      = int((grp["rating_normalized"] == "HOLD").sum())
+        neg_cnt       = int(grp["rating_normalized"].isin(["NEGATIVE", "SELL"]).sum())
+        hold_sell     = hold_cnt + neg_cnt  # kept for output column compatibility
+        firm_count    = int(grp["securities_firm"].nunique())
 
         upside_vals = grp["upside"].dropna()
         avg_upside = float(upside_vals.mean()) if not upside_vals.empty else 0.0
@@ -34,7 +38,15 @@ def calculate_buy_signal_score(df: pd.DataFrame) -> pd.DataFrame:
             tp_up = int((diff > 0).sum())
             tp_down = int((diff < 0).sum())
 
-        score = buy_count + tp_up + firm_count + upside_score - hold_sell - tp_down
+        score = (buy_count
+                 + positive_cnt * 0.6
+                 + neutral_cnt * 0.2
+                 - hold_cnt * 0.1
+                 - neg_cnt
+                 + tp_up
+                 + firm_count
+                 + upside_score
+                 - tp_down)
 
         rows.append(
             {
