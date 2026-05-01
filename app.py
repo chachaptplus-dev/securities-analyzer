@@ -155,6 +155,9 @@ def _process_files(uploaded_files: list) -> None:
 
             tp = report.get("target_price")
             cp = report.get("current_price")
+            if tp and cp and cp > 0 and tp > cp * 3:
+                report["current_price"] = None
+                cp = None
             report["upside"] = round((tp - cp) / cp * 100, 1) if (tp and cp and cp > 0) else None
 
             report["report_date"] = report.pop("date", None)

@@ -131,7 +131,12 @@ def _get_target_rows(con: duckdb.DuckDBPyConnection, since: str | None = None) -
     return con.execute(f"""
         SELECT id, filename, company, rating_normalized, target_price, current_price, thesis
         FROM reports
-        WHERE (rating_normalized = 'UNKNOWN' OR company IS NULL)
+        WHERE (
+            rating_normalized = 'UNKNOWN'
+            OR company IS NULL
+            OR (target_price IS NOT NULL AND current_price IS NOT NULL
+                AND target_price > current_price * 3)
+        )
         {extra}
         ORDER BY
             CASE WHEN thesis IS NOT NULL AND length(thesis) > 10 THEN 0 ELSE 1 END,
