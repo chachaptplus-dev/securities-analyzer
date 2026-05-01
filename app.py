@@ -287,7 +287,7 @@ def main() -> None:
     (tab_upload, tab_reports, tab_buy, tab_sectors,
      tab_clusters, tab_company, tab_intel) = st.tabs(
         ["📤 PDF Upload", "📋 Extracted Reports", "📈 Buy Stocks",
-         "🌐 Sector Trends", "🔍 Thesis Clusters", "🏢 Company Detail",
+         "🌐 Sector Trends", "📊 테마 투자 동향", "🏢 Company Detail",
          "📡 시장 인텔리전스"]
     )
 
