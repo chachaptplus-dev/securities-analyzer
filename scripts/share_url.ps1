@@ -1,6 +1,9 @@
+﻿# -*- coding: utf-8 -*-
 # share_url.ps1
 # Start Streamlit first: py -3 -m streamlit run app.py
 # Then run this script to get a shareable Cloudflare URL.
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Step 1: Clear clipboard
 Set-Clipboard -Value ""
@@ -19,7 +22,7 @@ for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
     if (Test-Path $logFile) {
         $content = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
-        Write-Host "[$i초] 로그 확인 중..."
+        Write-Host "[$i s] checking log..."
         if ($content) { Write-Host $content[-200..-1] }
         if ($content -match 'https://([a-z0-9\-]+\.trycloudflare\.com)') {
             $url = $matches[0]
@@ -31,12 +34,12 @@ for ($i = 0; $i -lt 60; $i++) {
 # Step 4: Result
 if ($url) {
     Set-Clipboard -Value $url
-    Write-Host "URL 복사됨: $url" -ForegroundColor Green
+    Write-Host "URL Copied: $url" -ForegroundColor Green
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show("URL 복사됨!`n`n$url`n`n카카오톡에 붙여넣기 하세요", "완료")
+    [System.Windows.Forms.MessageBox]::Show("URL Copied!`n`n$url`n`nPaste this URL to share with friends", "Done")
 } else {
-    Write-Host "URL을 찾지 못했습니다. 로그:" -ForegroundColor Red
+    Write-Host "URL not found. Log:" -ForegroundColor Red
     Get-Content $logFile -ErrorAction SilentlyContinue
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show("URL을 찾지 못했습니다.`n로그파일: $logFile", "실패")
+    [System.Windows.Forms.MessageBox]::Show("URL not found.`nLog file: $logFile", "Failed")
 }
