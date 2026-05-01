@@ -2,14 +2,22 @@
 # Starts Streamlit + Cloudflare Tunnel, captures the public URL,
 # copies it to clipboard, and shows a popup for easy sharing.
 #
-# Double-click share_url.bat to run without opening PowerShell manually.
+# Double-click share_url.bat to run.
 
-$ProjectDir = "C:\projects\securities-analyzer"
+$ProjectDir    = "C:\projects\securities-analyzer"
 $CloudflaredExe = "$ProjectDir\cloudflared.exe"
+if (-not (Test-Path $CloudflaredExe)) { $CloudflaredExe = "cloudflared" }
 
-# Fallback to system PATH if not in project root
-if (-not (Test-Path $CloudflaredExe)) {
-    $CloudflaredExe = "cloudflared"
+# Load Windows Forms FIRST — must be in the same process before any popup calls
+Add-Type -AssemblyName System.Windows.Forms
+
+function Show-Popup {
+    param([string]$Message, [string]$Title, [string]$Icon = "Information")
+    [System.Windows.Forms.MessageBox]::Show(
+        $Message, $Title,
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::$Icon
+    ) | Out-Null
 }
 
 Write-Host ""
@@ -28,57 +36,94 @@ Start-Process powershell -ArgumentList `
 Write-Host "      5초 대기..." -ForegroundColor DarkGray
 Start-Sleep -Seconds 5
 
-# ── Step 2: Start cloudflared, capture URL from log ──────────────────────────
+# ── Step 2: Start cloudflared, capture BOTH stdout and stderr ────────────────
 Write-Host "[2/3] Cloudflare 터널 연결 중... (최대 40초)" -ForegroundColor Yellow
 
-$logFile = "$env:TEMP\cloudflared_tunnel.log"
-if (Test-Path $logFile) { Remove-Item $logFile -Force }
+$logOut = "$env:TEMP\cf_stdout.log"
+$logErr = "$env:TEMP\cf_stderr.log"
+foreach ($f in $logOut, $logErr) {
+    if (Test-Path $f) { Remove-Item $f -Force }
+}
 
+# Redirect stdout AND stderr to separate files — cloudflared uses stderr for logs
 $cfProcess = Start-Process `
-    -FilePath $CloudflaredExe `
-    -ArgumentList "tunnel --url http://localhost:8501" `
-    -RedirectStandardError $logFile `
+    -FilePath      $CloudflaredExe `
+    -ArgumentList  "tunnel --url http://localhost:8501" `
+    -RedirectStandardOutput $logOut `
+    -RedirectStandardError  $logErr `
     -NoNewWindow -PassThru
+
+Write-Host "      cloudflared PID: $($cfProcess.Id)" -ForegroundColor DarkGray
 
 $url = $null
 for ($i = 1; $i -le 40; $i++) {
     Start-Sleep -Seconds 1
-    Write-Host "      대기 중... ($i/40)`r" -NoNewline -ForegroundColor DarkGray
-    if (Test-Path $logFile) {
-        $content = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
-        if ($content -match "https://[\w-]+\.trycloudflare\.com") {
-            $url = $Matches[0]
-            break
+
+    # Check both files for the URL
+    foreach ($logFile in $logOut, $logErr) {
+        if (Test-Path $logFile) {
+            $content = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+            if ($content -match "https://[a-z0-9-]+\.trycloudflare\.com") {
+                $url = $Matches[0]
+                break
+            }
         }
+    }
+    if ($url) { break }
+
+    # Debug: print last captured line every 5 seconds
+    if ($i % 5 -eq 0) {
+        Write-Host "  [DEBUG $i s] 로그 마지막 줄:" -ForegroundColor DarkGray
+        foreach ($logFile in $logOut, $logErr) {
+            if (Test-Path $logFile) {
+                $tail = Get-Content $logFile -Tail 2 -ErrorAction SilentlyContinue
+                if ($tail) {
+                    Write-Host "    $(Split-Path $logFile -Leaf): $($tail[-1])" -ForegroundColor DarkGray
+                }
+            }
+        }
+    } else {
+        Write-Host "  대기 중... ($i/40)" -ForegroundColor DarkGray
     }
 }
 
-Write-Host "" # newline after the carriage-return progress line
-
+# ── Error path ────────────────────────────────────────────────────────────────
 if (-not $url) {
     Write-Host "[오류] URL을 찾지 못했습니다." -ForegroundColor Red
-    Write-Host "       로그 확인: $logFile" -ForegroundColor Red
+
+    # Collect last 6 lines from each log for the error popup
+    $debugLines = ""
+    foreach ($logFile in $logOut, $logErr) {
+        if (Test-Path $logFile) {
+            $tail = Get-Content $logFile -Tail 6 -ErrorAction SilentlyContinue
+            if ($tail) {
+                $debugLines += "`n[$(Split-Path $logFile -Leaf)]`n" + ($tail -join "`n")
+            }
+        }
+    }
+
     if (-not $cfProcess.HasExited) { $cfProcess.Kill() }
-    Read-Host "Enter를 눌러 종료"
+
+    Show-Popup (
+        "URL을 찾지 못했습니다. (40초 타임아웃)`n" +
+        "`ncloudflared가 설치되어 있는지 확인하세요:`n$CloudflaredExe`n" +
+        "`n로그 (마지막 6줄):$debugLines"
+    ) "오류 — 증권사 리포트 분석기" "Error"
     exit 1
 }
 
 # ── Step 3: Copy to clipboard ─────────────────────────────────────────────────
 Set-Clipboard -Value $url
 
-Write-Host "[3/3] URL 복사 완료!" -ForegroundColor Green
 Write-Host ""
+Write-Host "[3/3] URL 복사 완료!" -ForegroundColor Green
 Write-Host "  $url" -ForegroundColor Cyan
 Write-Host ""
 
 # ── Step 4: Popup ─────────────────────────────────────────────────────────────
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.MessageBox]::Show(
-    "URL이 클립보드에 복사됐어요!`n`n$url`n`n친구에게 카카오톡으로 붙여넣기 하세요 😊",
-    "증권사 리포트 분석기",
-    [System.Windows.Forms.MessageBoxButtons]::OK,
-    [System.Windows.Forms.MessageBoxIcon]::Information
-) | Out-Null
+Show-Popup (
+    "URL이 클립보드에 복사됐어요!`n`n$url`n`n친구에게 카카오톡으로 붙여넣기 하세요 :)"
+) "증권사 리포트 분석기"
 
 # ── Keep alive: tunnel runs until this window is closed ───────────────────────
 Write-Host "터널이 실행 중입니다." -ForegroundColor Green
@@ -90,8 +135,6 @@ try {
         Start-Sleep -Seconds 5
     }
 } finally {
-    if ($cfProcess -and -not $cfProcess.HasExited) {
-        $cfProcess.Kill()
-    }
+    if ($cfProcess -and -not $cfProcess.HasExited) { $cfProcess.Kill() }
     Write-Host "터널이 종료되었습니다." -ForegroundColor Red
 }
